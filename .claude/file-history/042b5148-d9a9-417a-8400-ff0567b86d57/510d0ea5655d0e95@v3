@@ -1,0 +1,150 @@
+"""F3 Feed — ranking strategies.
+
+Two independent ranking paths are implemented here:
+
+1. **CosineRanker** — queries ``VectorStorePort`` in the ``policy_chunks``
+   namespace with the persona's embedding, aggregates matching chunks up to
+   the policy level ("best chunk wins"), and returns the top-K policy ids in
+   similarity-descending order. This is the canonical path from the F3 card
+   in ``docs/07-roadmap.md §8.3``.
+
+2. **TagIntersectionRanker** — pure function over the persona profile and the
+   set of known policies. Scores each policy by the size of the intersection
+   between ``persona.policy_sensitivity_areas`` and the union of
+   ``policy.tags`` and ``policy.affected_groups``, then applies a deterministic
+   tie-break on ``urgency`` then ``source_name``.
+   This is the fallback the F3 card explicitly requires when the persona has
+   no embedding yet (which is the live state until F2 produces embeddings).
+
+Neither path calls an LLM. Neither path knows about any other feature. Both
+are callable directly from unit tests without touching the HTTP layer.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+from clara.core.domain.persona import PersonaProfile
+from clara.core.domain.policy import Policy, Urgency
+from clara.core.ports.vector import VectorStorePort
+
+CHUNK_NAMESPACE = "policy_chunks"
+
+# Urgency priority for deterministic tie-breaking (higher = more urgent).
+_URGENCY_WEIGHT: dict[Urgency, int] = {"high": 3, "medium": 2, "low": 1}
+
+
+class CosineRanker:
+    """Vector-store-backed ranker. Aggregates chunk hits to policy-level hits."""
+
+    def __init__(self, vector: VectorStorePort) -> None:
+        self._vector = vector
+
+    async def top_policy_ids(
+        self,
+        query_vector: list[float],
+        top_k: int,
+    ) -> list[tuple[str, float]]:
+        """Return ``[(policy_id, best_chunk_score), ...]`` sorted desc.
+
+        Over-fetches chunks (``top_k * 4``) to improve the odds that every
+        surviving policy has at least one chunk in the result set. The cap is
+        an engineering choice, not an invariant — tune if recall degrades.
+        """
+        if not query_vector:
+            return []
+        raw = await self._vector.query(
+            namespace=CHUNK_NAMESPACE,
+            vector=query_vector,
+            top_k=max(top_k * 4, top_k),
+        )
+        return aggregate_chunks_to_policies(raw, top_k=top_k)
+
+
+def aggregate_chunks_to_policies(
+    chunk_hits: Iterable[tuple[str, float, dict[str, object]]],
+    *,
+    top_k: int,
+) -> list[tuple[str, float]]:
+    """Collapse chunk-level cosine hits to policy-level hits, best-chunk-wins.
+
+    Pure function. ``chunk_hits`` is the shape returned by
+    ``VectorStorePort.query``: ``(chunk_id, cosine_score, payload)``. The
+    ``payload["policy_id"]`` link is written by F9's ingestion pipeline.
+    """
+    best: dict[str, float] = {}
+    for _chunk_id, score, payload in chunk_hits:
+        policy_id = payload.get("policy_id")
+        if not isinstance(policy_id, str):
+            continue
+        current = best.get(policy_id)
+        if current is None or score > current:
+            best[policy_id] = score
+    ordered = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
+    return ordered[:top_k]
+
+
+def tag_intersection_score(profile: PersonaProfile, policy: Policy) -> int:
+    """Count how many of the persona's sensitivity areas match the policy's tags.
+
+    Pure function. The intersection is case-insensitive; both sides are
+    normalized to ``str.lower()`` before comparing so ``"Housing"`` in a tag
+    and ``"housing"`` in a sensitivity area still match.
+    """
+    persona_areas = {area.lower() for area in profile.policy_sensitivity_areas}
+    policy_signals = {tag.lower() for tag in policy.tags} | {
+        group.lower() for group in policy.affected_groups
+    }
+    return len(persona_areas & policy_signals)
+
+
+def tag_intersection_rank(
+    profile: PersonaProfile,
+    policies: list[Policy],
+    *,
+    top_k: int,
+) -> list[tuple[str, float]]:
+    """Fallback ranker: score every policy by tag intersection.
+
+    Tie-breaking order (all deterministic, no hash randomness):
+      1. Higher intersection score wins.
+      2. Higher urgency wins (high > medium > low).
+      3. Lexicographic source_name ascending wins (stable across runs).
+
+    Returns ``[(policy_id, score_as_float), ...]`` so the caller can treat both
+    ranker outputs uniformly. Zero-score policies are kept — they're still a
+    better signal than "no cards at all" when the persona has no overlap.
+    """
+    scored: list[tuple[Policy, int]] = [
+        (p, tag_intersection_score(profile, p)) for p in policies
+    ]
+    scored.sort(
+        key=lambda pair: (
+            -pair[1],
+            -_URGENCY_WEIGHT.get(pair[0].urgency, 0),
+            pair[0].source_name,
+        )
+    )
+    return [(p.id, float(score)) for p, score in scored[:top_k]]
+
+
+async def rank_for_persona(
+    profile: PersonaProfile,
+    *,
+    policies: list[Policy],
+    vector: VectorStorePort,
+    top_k: int,
+) -> list[tuple[str, float]]:
+    """Dispatcher: cosine path if the persona has an embedding, else fallback.
+
+    Both paths produce the same output shape so the use-case stays oblivious
+    to which ranker ran. If the cosine query returns an empty list (vector
+    store empty — typical in tests without seeded chunks), we fall back
+    rather than return an empty feed.
+    """
+    if profile.embedding:
+        ranker = CosineRanker(vector)
+        hits = await ranker.top_policy_ids(profile.embedding, top_k=top_k)
+        if hits:
+            return hits
+    return tag_intersection_rank(profile, policies, top_k=top_k)

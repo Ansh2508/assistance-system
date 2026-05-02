@@ -1,0 +1,130 @@
+/**
+ * MediaPanel — display-state tests.
+ *
+ * Because `MediaPanel` depends on `useMedia` (which subscribes to the shared
+ * FE bus), we fire real `card.selected` events and mock the network fetch
+ * via the global `fetch` so the hook's real effect chain runs end-to-end.
+ *
+ * Covers:
+ *   1. Hidden when no card has been selected yet.
+ *   2. Loading skeleton after card.selected but before fetch resolves.
+ *   3. Populated view with all three blocks + trust badge on success.
+ *   4. Error state on fetch failure.
+ *   5. "No analysis yet" soft message on 404.
+ */
+
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
+
+import { MediaPanel } from "../ui/MediaPanel";
+import { bus } from "@shared/bus";
+
+function mockFetchOnce(body: unknown, init: { status?: number } = {}) {
+  const status = init.status ?? 200;
+  const res = new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+  global.fetch = vi.fn(() => Promise.resolve(res)) as unknown as typeof fetch;
+}
+
+function mockFetchReject(err: Error) {
+  global.fetch = vi.fn(() => Promise.reject(err)) as unknown as typeof fetch;
+}
+
+const ANALYSIS = {
+  policy_id: "p_test",
+  official_framing: "Routine permit update, per the ministry brief.",
+  media_focus: "Press focused on coalition arithmetic, not the permit change.",
+  hidden_impact: "Form AB-12 is replaced; citizens must visit the Ausländerbehörde directly.",
+  deadline_alert: "New route goes live 2026-04-30.",
+  watch_out_for: "Watch out: the BAMF inbox still accepts forms for 30 days.",
+  trust_level: "high" as const,
+};
+
+describe("MediaPanel", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders nothing when no card has been selected yet", () => {
+    const { container } = render(<MediaPanel />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("shows a loading skeleton immediately after card.selected", async () => {
+    // Fetch never resolves → panel stays in loading state.
+    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
+
+    render(<MediaPanel />);
+
+    await act(async () => {
+      bus.emit("card.selected", {
+        personaId: "persona_test",
+        policyId: "p_test",
+      });
+    });
+
+    expect(screen.getByText("Media lens")).toBeInTheDocument();
+  });
+
+  it("renders all three blocks + trust badge on success", async () => {
+    mockFetchOnce(ANALYSIS);
+    render(<MediaPanel />);
+
+    await act(async () => {
+      bus.emit("card.selected", {
+        personaId: "persona_test",
+        policyId: "p_test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Official framing")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Media focus")).toBeInTheDocument();
+    expect(screen.getByText("Hidden impact")).toBeInTheDocument();
+    expect(screen.getByText("HIGH TRUST")).toBeInTheDocument();
+    expect(screen.getByText(/Form AB-12 is replaced/)).toBeInTheDocument();
+    expect(screen.getByText(/Watch out:/)).toBeInTheDocument();
+    expect(screen.getByText(/New route goes live 2026-04-30/)).toBeInTheDocument();
+  });
+
+  it("shows an error message on network failure", async () => {
+    mockFetchReject(new Error("network down"));
+    render(<MediaPanel />);
+
+    await act(async () => {
+      bus.emit("card.selected", {
+        personaId: "persona_test",
+        policyId: "p_test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/network down/i);
+    });
+  });
+
+  it("shows the soft 'no analysis yet' message on 404", async () => {
+    mockFetchOnce({}, { status: 404 });
+    render(<MediaPanel />);
+
+    await act(async () => {
+      bus.emit("card.selected", {
+        personaId: "persona_test",
+        policyId: "p_test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No media analysis for this policy yet/i),
+      ).toBeInTheDocument();
+    });
+  });
+});

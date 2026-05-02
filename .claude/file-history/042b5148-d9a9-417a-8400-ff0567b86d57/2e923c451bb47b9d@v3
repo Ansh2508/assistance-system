@@ -1,0 +1,210 @@
+"""F3 Feed — Server-Sent Events bridge.
+
+The SSE bridge is the single HTTP fan-out point for backend events the UI
+needs to react to without polling. It lives inside the ``feed`` feature
+because ``feed`` already owns the persona-scoped read path — see
+``docs/07-roadmap.md §5.2``. The bridge is **strictly a subscriber**: it
+never imports other feature code. It receives events through the typed
+``EventBus`` and re-emits them as ``text/event-stream`` frames.
+
+Events forwarded (from ``core/events/catalog.py``):
+  * ``feed.generated``       — when F3 itself publishes a pre-computed feed
+  * ``briefing.generated``   — F4 Translator
+  * ``citations.resolved``   — F5 Citations
+  * ``voice.ready``          — F6 Voice
+  * ``media.analyzed``       — F7 Media Analysis
+  * ``watchlist.ready``      — F8 Watchlist
+
+Every connected client gets every bridged event. The client is responsible
+for filtering by ``briefingId`` / ``personaId`` / ``policyId`` because the
+backend payloads don't always carry a persona_id (e.g. ``voice.ready`` is
+keyed by briefing, not persona). This matches the card's note that the FE
+uses whichever signal arrives first to enable its own UI state.
+
+Framing follows the W3C Server-Sent Events spec:
+    ``event: <name>\\ndata: <json>\\n\\n``
+Heartbeat comments (``: keepalive\\n\\n``) are emitted every 15s so proxies
+don't reap idle connections.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from dataclasses import fields, is_dataclass
+from typing import Any
+
+import structlog
+
+from clara.core.events.catalog import (
+    BriefingGenerated,
+    CitationsResolved,
+    Event,
+    FeedGenerated,
+    MediaAnalyzed,
+    VoiceReady,
+    WatchlistReady,
+)
+from clara.core.ports.bus import EventBus
+
+log = structlog.get_logger(__name__)
+
+_HEARTBEAT_SECONDS: float = 15.0
+
+# Map event class → wire name. Anything not in this map is not forwarded.
+# Intentionally explicit (no reflection) so import-linter can verify the
+# bridge only depends on the catalog, never on other features.
+_BRIDGED_EVENTS: dict[type[Event], str] = {
+    FeedGenerated: FeedGenerated.NAME,
+    BriefingGenerated: BriefingGenerated.NAME,
+    CitationsResolved: CitationsResolved.NAME,
+    VoiceReady: VoiceReady.NAME,
+    MediaAnalyzed: MediaAnalyzed.NAME,
+    WatchlistReady: WatchlistReady.NAME,
+}
+
+
+def _event_to_wire_payload(event: Event) -> dict[str, Any]:
+    """Flatten an event dataclass to a JSON-serializable dict.
+
+    Walks the dataclass ``fields()`` directly rather than using ``asdict``
+    because ``asdict`` deep-copies every field — which fails or mangles
+    Pydantic v2 ``BaseModel`` instances. Per-field ``_json_safe`` handles
+    Pydantic via ``model_dump(mode="json")``.
+    """
+    if not is_dataclass(event):
+        return {"value": str(event)}
+    result: dict[str, Any] = {}
+    for dc_field in fields(event):
+        if dc_field.name == "NAME":
+            continue
+        result[dc_field.name] = _json_safe(getattr(event, dc_field.name))
+    return result
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively convert to a JSON-serializable form.
+
+    Uses ``default=str`` at serialization time would be simpler, but keeping
+    this explicit means the wire format is visible at review time and we
+    never accidentally leak a ``datetime.__repr__`` into the FE.
+    """
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "model_dump"):  # Pydantic v2
+        return value.model_dump(mode="json")
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _format_frame(event_name: str, payload: dict[str, Any]) -> str:
+    """Render one SSE frame. Safe for empty data (still a full frame)."""
+    data = json.dumps(payload, separators=(",", ":"), default=str)
+    return f"event: {event_name}\ndata: {data}\n\n"
+
+
+class SseBridge:
+    """Fan-out from the in-process EventBus to per-connection SSE queues.
+
+    One bridge instance lives for the lifetime of the app (constructed in
+    ``feed.wire()``). Every SSE client gets its own bounded ``asyncio.Queue``
+    registered with ``open_stream()`` — on client disconnect the generator
+    calls ``_unregister`` and the queue is garbage-collected.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: set[asyncio.Queue[str]] = set()
+        self._lock = asyncio.Lock()
+
+    def attach(self, bus: EventBus) -> None:
+        """Subscribe the bridge to every event in _BRIDGED_EVENTS.
+
+        Called once from ``feed.wire()``. Each event class maps to a single
+        handler that serializes and fans out; handlers never raise (the bus
+        logs and continues, but we'd rather the SSE subscriber stay alive).
+        """
+        for event_cls, event_name in _BRIDGED_EVENTS.items():
+            bus.subscribe(event_name, self._make_handler(event_cls, event_name))
+        log.info(
+            "feed.sse.attached",
+            feature="feed",
+            n_events=len(_BRIDGED_EVENTS),
+            events=list(_BRIDGED_EVENTS.values()),
+        )
+
+    def _make_handler(
+        self,
+        expected_cls: type[Event],
+        event_name: str,
+    ) -> Any:
+        async def _handler(event: Event) -> None:
+            if not isinstance(event, expected_cls):
+                log.warning(
+                    "feed.sse.unexpected_event",
+                    feature="feed",
+                    event_name=event_name,
+                    received=type(event).__name__,
+                )
+                return
+            try:
+                payload = _event_to_wire_payload(event)
+                frame = _format_frame(event_name, payload)
+            except Exception as exc:
+                log.error(
+                    "feed.sse.serialize_failed",
+                    feature="feed",
+                    event_name=event_name,
+                    error=str(exc),
+                )
+                return
+            await self._fan_out(frame)
+
+        return _handler
+
+    async def _fan_out(self, frame: str) -> None:
+        async with self._lock:
+            queues = list(self._subscribers)
+        for q in queues:
+            try:
+                q.put_nowait(frame)
+            except asyncio.QueueFull:
+                log.warning("feed.sse.queue_full", feature="feed")
+
+    async def _register(self) -> asyncio.Queue[str]:
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=256)
+        async with self._lock:
+            self._subscribers.add(queue)
+        log.info("feed.sse.client_connected", feature="feed", n=len(self._subscribers))
+        return queue
+
+    async def _unregister(self, queue: asyncio.Queue[str]) -> None:
+        async with self._lock:
+            self._subscribers.discard(queue)
+        log.info("feed.sse.client_disconnected", feature="feed", n=len(self._subscribers))
+
+    async def open_stream(self, persona_id: str) -> AsyncIterator[str]:
+        """Async generator of SSE frames for one connection.
+
+        ``persona_id`` is currently unused at the backend filter layer — the
+        FE filters by the ids inside the payloads it cares about. Kept in the
+        signature so the HTTP route can require the query param and so we
+        can add backend filtering later without changing the router.
+        """
+        queue = await self._register()
+        # Immediately send a comment frame so the client sees the connection
+        # as "open" even if no events fire for 15s. Comment frames start with
+        # a colon and are ignored by the SSE spec parser.
+        yield f": connected persona={persona_id}\n\n"
+        try:
+            while True:
+                try:
+                    frame = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                    yield frame
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await self._unregister(queue)

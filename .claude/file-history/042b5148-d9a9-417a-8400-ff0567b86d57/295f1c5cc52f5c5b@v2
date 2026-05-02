@@ -1,0 +1,179 @@
+"""F3 Feed — use case.
+
+Flow on ``persona.persisted``:
+  1. Hydrate the full PersonaProfile from the event payload.
+  2. Fetch all known policies from Repository[Policy].
+  3. Rank them via ``rank_for_persona`` (cosine if persona has an embedding,
+     tag-intersection fallback otherwise).
+  4. Build a FeedCard for each of the top-K policy ids.
+  5. Cache per persona_id (first GET /api/feed is then O(1)).
+  6. Publish ``feed.generated`` after the cache write — subscribers currently
+     comprise the SSE bridge only, which re-emits to connected FE clients.
+
+Flow on ``GET /api/feed?persona_id=<id>``:
+  1. Cache hit → return immediately.
+  2. Cache miss → hydrate persona from Repository[PersonaProfile], run the
+     same pipeline inline, cache, return. If the persona is unknown, return
+     an empty list (not a 404 — an empty dashboard is a valid state).
+"""
+
+from __future__ import annotations
+
+import structlog
+
+from clara.core.domain.feed import FeedCard
+from clara.core.domain.persona import PersonaProfile
+from clara.core.domain.policy import Policy
+from clara.core.events.catalog import FeedGenerated
+from clara.core.ports.bus import EventBus
+from clara.core.ports.repository import Repository
+from clara.core.ports.vector import VectorStorePort
+from clara.features.feed.ranker import rank_for_persona
+
+log = structlog.get_logger(__name__)
+
+TOP_K: int = 3
+PREVIEW_CHARS: int = 120
+# Cap how many policies we feed into the tag-intersection fallback. The
+# fallback is O(n) in policies but so is pulling them from the repository,
+# so 200 is a sane ceiling for day-1 seed data (~20 policies).
+POLICY_FETCH_LIMIT: int = 200
+
+
+def _build_card(policy: Policy, score: float) -> FeedCard:
+    """Assemble one FeedCard from a Policy + the ranker's relevance score.
+
+    The score is clamped into ``[0.0, 1.0]`` because ``FeedCard.relevance_score``
+    is a Pydantic-constrained float. Tag-intersection scores are integers and
+    will commonly exceed 1.0 before clamping — that's intentional: we rescale
+    by dividing by the max score in the batch so the top card is always 1.0.
+    """
+    return FeedCard(
+        policy_id=policy.id,
+        title=policy.title,
+        source_name=policy.source_name,
+        relevance_score=score,
+        urgency=policy.urgency,
+        preview=policy.raw_text[:PREVIEW_CHARS],
+    )
+
+
+def _normalize_scores(ranked: list[tuple[str, float]]) -> dict[str, float]:
+    """Rescale raw scores into ``[0.0, 1.0]`` so FeedCard validation passes.
+
+    Cosine scores are already in ``[-1.0, 1.0]``; negative values are
+    clipped to 0. Tag-intersection scores are non-negative integers; the
+    top score is mapped to 1.0 and the rest scale linearly. Empty input
+    returns an empty mapping.
+    """
+    if not ranked:
+        return {}
+    max_score = max(score for _, score in ranked)
+    if max_score <= 0:
+        return {pid: 0.0 for pid, _ in ranked}
+    return {pid: max(0.0, min(1.0, score / max_score)) for pid, score in ranked}
+
+
+class FeedUseCase:
+    def __init__(
+        self,
+        *,
+        vector: VectorStorePort,
+        policies: Repository[Policy],
+        personas: Repository[PersonaProfile],
+        bus: EventBus,
+    ) -> None:
+        self._vector = vector
+        self._policies = policies
+        self._personas = personas
+        self._bus = bus
+        self._cache: dict[str, list[FeedCard]] = {}
+
+    # ------------------------------------------------------------------
+    # Subscription path — called from handler on persona.persisted
+    # ------------------------------------------------------------------
+
+    async def precompute_for_persona(self, profile: PersonaProfile) -> list[FeedCard]:
+        """Rank, cache, and publish FeedGenerated for the given profile.
+
+        The cache write happens before the publish so that SSE subscribers
+        (and anyone racing a GET /api/feed from the FE) see a consistent
+        view: the moment feed.generated fires, /api/feed is guaranteed to
+        return the same cards.
+        """
+        cards = await self._rank_and_build(profile)
+        self._cache[profile.id] = cards
+        await self._bus.publish(FeedGenerated(persona_id=profile.id, cards=cards))
+        log.info(
+            "feed.generated",
+            feature="feed",
+            persona_id=profile.id,
+            n=len(cards),
+            path="precompute",
+        )
+        return cards
+
+    # ------------------------------------------------------------------
+    # HTTP path — called from router on GET /api/feed
+    # ------------------------------------------------------------------
+
+    async def top_cards_for(self, persona_id: str) -> list[FeedCard]:
+        """Return the top-K cards for a persona, preferring the cache."""
+        cached = self._cache.get(persona_id)
+        if cached is not None:
+            log.debug("feed.cache_hit", feature="feed", persona_id=persona_id)
+            return cached
+
+        profile = await self._personas.get(persona_id)
+        if profile is None:
+            log.info(
+                "feed.persona_not_found",
+                feature="feed",
+                persona_id=persona_id,
+            )
+            return []
+
+        cards = await self._rank_and_build(profile)
+        self._cache[persona_id] = cards
+        log.info(
+            "feed.generated",
+            feature="feed",
+            persona_id=persona_id,
+            n=len(cards),
+            path="inline",
+        )
+        return cards
+
+    # ------------------------------------------------------------------
+    # Shared pipeline
+    # ------------------------------------------------------------------
+
+    async def _rank_and_build(self, profile: PersonaProfile) -> list[FeedCard]:
+        all_policies = await self._policies.list(limit=POLICY_FETCH_LIMIT)
+        if not all_policies:
+            return []
+
+        ranked = await rank_for_persona(
+            profile,
+            policies=all_policies,
+            vector=self._vector,
+            top_k=TOP_K,
+        )
+        normalized = _normalize_scores(ranked)
+
+        # Resolve policy ids back to Policy objects. Ranker only returns ids
+        # the repository knew about, so this lookup should always hit — but
+        # we treat a missing id as a soft skip rather than a crash.
+        by_id: dict[str, Policy] = {p.id: p for p in all_policies}
+        cards: list[FeedCard] = []
+        for policy_id, _raw_score in ranked:
+            policy = by_id.get(policy_id)
+            if policy is None:
+                log.warning(
+                    "feed.policy_id_not_in_repo",
+                    feature="feed",
+                    policy_id=policy_id,
+                )
+                continue
+            cards.append(_build_card(policy, normalized.get(policy_id, 0.0)))
+        return cards

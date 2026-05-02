@@ -1,0 +1,52 @@
+/**
+ * TrustBadge — small pill that encodes MediaAnalysis.trust_level.
+ *
+ * Uses the locked clara-* palette strictly:
+ *   - high   → success token (the only place `success` appears in the UI)
+ *   - medium → accent token
+ *   - low    → danger token
+ *
+ * Pure presentational. No props beyond the trust level.
+ */
+
+import { cn } from "@shared/lib";
+
+import type { TrustLevel } from "../api";
+
+const TOKENS: Record<TrustLevel, { label: string; className: string }> = {
+  high: {
+    label: "HIGH TRUST",
+    className:
+      "text-clara-success ring-1 ring-clara-success/40 bg-clara-success/10",
+  },
+  medium: {
+    label: "MEDIUM TRUST",
+    className:
+      "text-clara-accent ring-1 ring-clara-accent/40 bg-clara-accent/10",
+  },
+  low: {
+    label: "LOW TRUST",
+    className:
+      "text-clara-danger ring-1 ring-clara-danger/40 bg-clara-danger/10",
+  },
+};
+
+interface Props {
+  level: TrustLevel;
+}
+
+export function TrustBadge({ level }: Props) {
+  const token = TOKENS[level];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5",
+        "font-mono text-[10px] tracking-wider",
+        token.className,
+      )}
+      aria-label={`Trust level: ${level}`}
+    >
+      {token.label}
+    </span>
+  );
+}

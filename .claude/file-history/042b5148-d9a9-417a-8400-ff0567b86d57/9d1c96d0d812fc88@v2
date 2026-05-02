@@ -1,0 +1,88 @@
+/**
+ * useDashboard — orchestrator hook for the dashboard widget.
+ *
+ * Responsibilities (the single widget layer where wiring is allowed):
+ *   1. Resolve the active persona from the URL `?persona=` query param,
+ *      falling back to `localStorage["clara.persona.id"]` (the literal
+ *      "profile never leaves your browser" contract from F1).
+ *   2. Open an SSE connection via `shared/sse` scoped to the resolved
+ *      persona. Close it on unmount or persona change.
+ *   3. Listen to `card.selected` so the widget knows which PolicyCard is
+ *      active (used to decide whether to show the FeedGrid or the
+ *      BriefingPanel in the main pane).
+ *
+ * This is the ONLY hook in the repo that touches the SSE layer + the
+ * router + localStorage simultaneously. Features cannot reach across
+ * these concerns, per FSD (shared ← entities ← features ← widgets).
+ */
+
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+
+import { bus } from "@shared/bus";
+import { openSseStream } from "@shared/sse";
+
+const PERSONA_STORAGE_KEY = "clara.persona.id";
+
+export interface UseDashboardState {
+  personaId: string | null;
+  activePolicyId: string | null;
+  activeBriefingId: string | null;
+}
+
+function readStoredPersona(): string | null {
+  try {
+    return localStorage.getItem(PERSONA_STORAGE_KEY);
+  } catch {
+    // Accessing localStorage can throw in privacy modes / SSR. Fail soft.
+    return null;
+  }
+}
+
+export function useDashboard(): UseDashboardState {
+  const [params] = useSearchParams();
+  const urlPersona = params.get("persona");
+
+  const [personaId, setPersonaId] = useState<string | null>(
+    urlPersona ?? readStoredPersona(),
+  );
+
+  const [activePolicyId, setActivePolicyId] = useState<string | null>(null);
+  const [activeBriefingId, setActiveBriefingId] = useState<string | null>(
+    null,
+  );
+
+  // Keep personaId in sync with the URL (onboarding navigates to
+  // /dashboard?persona=<id>, so the first render sees it immediately).
+  useEffect(() => {
+    if (urlPersona !== null && urlPersona !== personaId) {
+      setPersonaId(urlPersona);
+    }
+  }, [urlPersona, personaId]);
+
+  // Track selected card for the main pane.
+  useEffect(() => {
+    return bus.on("card.selected", ({ policyId }) => {
+      setActivePolicyId(policyId);
+      setActiveBriefingId(null); // reset until briefing.ready lands
+    });
+  }, []);
+
+  // Track briefing readiness so the voice player can enable itself.
+  useEffect(() => {
+    return bus.on("briefing.ready", ({ briefingId }) => {
+      setActiveBriefingId(briefingId);
+    });
+  }, []);
+
+  // Manage the SSE connection lifecycle — scoped to personaId.
+  useEffect(() => {
+    if (personaId === null) return;
+    const conn = openSseStream(personaId);
+    return () => {
+      conn.close();
+    };
+  }, [personaId]);
+
+  return { personaId, activePolicyId, activeBriefingId };
+}

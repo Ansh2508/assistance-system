@@ -1,0 +1,34 @@
+/**
+ * F3 Feed — FE bus wiring.
+ *
+ * Feed EMITS "card.selected" when the user taps a PolicyCard.
+ * F4 Briefing and F7 Media Analysis both subscribe to that event — but
+ * neither imports from this file. The bus is the only coupling point.
+ *
+ * Feed also SUBSCRIBES to "feed.generated" (forwarded from the backend SSE
+ * bridge by shared/sse) to trigger a re-fetch when the pre-compute completes
+ * server-side after `persona.persisted`.
+ */
+
+import { bus } from "@shared/bus";
+
+export function emitCardSelected(personaId: string, policyId: string): void {
+  bus.emit("card.selected", { personaId, policyId });
+}
+
+/** Subscribe to feed.generated for the given persona. Returns unsub fn. */
+export function subscribeFeedGenerated(
+  personaId: string,
+  onReady: () => void,
+): () => void {
+  // feed.generated is NOT in the canonical ClaraEvents map (docs/06-contracts.md
+  // §4.2 — server-generated events flow through HTTP/SSE, not the FE bus).
+  // The SSE client in shared/sse is responsible for translating
+  // backend feed.generated into a refetch trigger. Until that surface exists
+  // on the FE bus, we use a no-op unsubscribe.
+  void personaId;
+  void onReady;
+  return () => {
+    /* no-op — wired once shared/sse publishes feed refresh signals */
+  };
+}

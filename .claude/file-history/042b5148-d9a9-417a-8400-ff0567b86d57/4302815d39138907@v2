@@ -1,0 +1,125 @@
+/**
+ * PolicyCard — unit tests.
+ *
+ * Covers:
+ *   1. Renders title, source, preview.
+ *   2. Urgency pill label matches the mapping.
+ *   3. Clicking the button calls onSelect with the correct policy_id.
+ *   4. Relevance percentage is clamped to [0, 100] and rendered correctly.
+ *   5. Selected state sets aria-pressed=true.
+ */
+
+import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+import { PolicyCard } from "../ui/PolicyCard";
+import type { FeedCard } from "../api";
+
+const baseCard: FeedCard = {
+  policy_id: "p_test",
+  title: "AufenthG §14 amendment",
+  source_name: "Bundesregierung",
+  relevance_score: 0.82,
+  urgency: "medium",
+  preview: "The amendment changes the permit route for Ukrainian refugees.",
+};
+
+describe("PolicyCard", () => {
+  it("renders title, source_name, and preview", () => {
+    render(
+      <PolicyCard card={baseCard} selected={false} onSelect={() => {}} />,
+    );
+    expect(screen.getByText("AufenthG §14 amendment")).toBeInTheDocument();
+    expect(screen.getByText("Bundesregierung")).toBeInTheDocument();
+    expect(
+      screen.getByText(/permit route for Ukrainian refugees/i),
+    ).toBeInTheDocument();
+  });
+
+  it("renders MEDIUM urgency label for urgency=medium", () => {
+    render(
+      <PolicyCard card={baseCard} selected={false} onSelect={() => {}} />,
+    );
+    expect(screen.getByText("MEDIUM")).toBeInTheDocument();
+  });
+
+  it("renders HIGH urgency label for urgency=high", () => {
+    render(
+      <PolicyCard
+        card={{ ...baseCard, urgency: "high" }}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByText("HIGH")).toBeInTheDocument();
+  });
+
+  it("renders LOW urgency label for urgency=low", () => {
+    render(
+      <PolicyCard
+        card={{ ...baseCard, urgency: "low" }}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByText("LOW")).toBeInTheDocument();
+  });
+
+  it("calls onSelect with the correct policy_id on click", async () => {
+    const onSelect = vi.fn();
+    render(
+      <PolicyCard card={baseCard} selected={false} onSelect={onSelect} />,
+    );
+    await userEvent.click(screen.getByRole("button"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("p_test");
+  });
+
+  it("sets aria-pressed=true when selected", () => {
+    render(<PolicyCard card={baseCard} selected={true} onSelect={() => {}} />);
+    const button = screen.getByRole("button");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("sets aria-pressed=false when not selected", () => {
+    render(
+      <PolicyCard card={baseCard} selected={false} onSelect={() => {}} />,
+    );
+    const button = screen.getByRole("button");
+    expect(button).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("renders relevance percentage clamped into [0, 100]", () => {
+    render(
+      <PolicyCard
+        card={{ ...baseCard, relevance_score: 0.47 }}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByText("47% match")).toBeInTheDocument();
+  });
+
+  it("clamps a negative relevance score to 0%", () => {
+    render(
+      <PolicyCard
+        card={{ ...baseCard, relevance_score: -0.2 }}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByText("0% match")).toBeInTheDocument();
+  });
+
+  it("clamps a relevance score above 1 to 100%", () => {
+    render(
+      <PolicyCard
+        card={{ ...baseCard, relevance_score: 1.8 }}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByText("100% match")).toBeInTheDocument();
+  });
+});

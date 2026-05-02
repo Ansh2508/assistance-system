@@ -1,0 +1,44 @@
+"""F3 Feed — HTTP routes.
+
+Routes owned by this feature:
+  * ``GET /api/feed?persona_id=<id>`` → ``FeedCard[]``
+  * ``GET /api/events?persona_id=<id>`` → ``text/event-stream`` (SSE bridge)
+
+The SSE endpoint is the single HTTP fan-out for backend events the FE needs
+to react to without polling. See ``features/feed/sse.py`` for the bridge
+implementation and ``docs/07-roadmap.md §5.2`` for the wire contract.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
+
+from clara.core.domain.feed import FeedCard
+from clara.features.feed.sse import SseBridge
+from clara.features.feed.use_case import FeedUseCase
+
+_SSE_HEADERS: dict[str, str] = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    # Disable proxy buffering so frames flush immediately (nginx, Cloudflare).
+    "X-Accel-Buffering": "no",
+}
+
+
+def build_router(use_case: FeedUseCase, sse: SseBridge) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/feed", response_model=list[FeedCard])
+    async def get_feed(persona_id: str = Query(..., min_length=1)) -> list[FeedCard]:
+        return await use_case.top_cards_for(persona_id)
+
+    @router.get("/events")
+    async def get_events(persona_id: str = Query(..., min_length=1)) -> StreamingResponse:
+        return StreamingResponse(
+            sse.open_stream(persona_id),
+            media_type="text/event-stream",
+            headers=_SSE_HEADERS,
+        )
+
+    return router

@@ -1,0 +1,27 @@
+import { useSearchParams } from "react-router-dom";
+
+// Stub — F3 Feed (agent-B) owns the real implementation.
+// This page exists so the router has a valid target after onboarding submit.
+export function DashboardPage() {
+  const [params] = useSearchParams();
+  const personaId = params.get("persona");
+
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-3xl flex-col justify-center gap-6 px-6 py-16">
+      <p className="font-mono text-xs uppercase tracking-widest text-clara-muted">
+        Clara · Dashboard
+      </p>
+      <h1 className="text-3xl font-semibold text-clara-text">
+        Building your briefing…
+      </h1>
+      {personaId !== null && (
+        <p className="text-sm text-clara-muted font-mono">
+          Persona: {personaId}
+        </p>
+      )}
+      <p className="text-clara-muted">
+        Your policy cards will appear here once agent-B ships F3 Feed.
+      </p>
+    </main>
+  );
+}

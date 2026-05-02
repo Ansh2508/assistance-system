@@ -1,0 +1,11 @@
+/**
+ * F7 Media Analysis · public barrel.
+ *
+ * Only import from this barrel. Internal file structure is private —
+ * enforced by eslint-plugin-boundaries (no-private: error).
+ */
+
+export { MediaPanel } from "./ui/MediaPanel";
+export { TrustBadge } from "./ui/TrustBadge";
+export { useMedia } from "./model/useMedia";
+export type { MediaAnalysis, TrustLevel } from "./api";

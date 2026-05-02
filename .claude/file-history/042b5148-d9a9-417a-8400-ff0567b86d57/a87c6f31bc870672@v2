@@ -1,0 +1,190 @@
+/**
+ * DashboardGrid — the layout surface that composes every feature.
+ *
+ * This is the ONLY file allowed to import from multiple features at once.
+ * FSD (docs/03-architecture.md §5) permits widgets to depend on
+ * features; features may never depend on each other. The composition here
+ * is how that constraint becomes usable in production.
+ *
+ * Layout (desktop, min-w-lg):
+ *
+ *     ┌──────────────────────────────────────────┐
+ *     │ header · persona strip                   │
+ *     ├──────────────┬───────────────────────────┤
+ *     │              │  main pane                │
+ *     │              │                           │
+ *     │  watchlist   │  ● when no card selected: │
+ *     │              │      FeedGrid             │
+ *     │              │  ● when a card is tapped: │
+ *     │              │      BriefingPanel        │
+ *     │              │      VoicePlayer          │
+ *     │              │      MediaPanel           │
+ *     └──────────────┴───────────────────────────┘
+ *
+ * Mobile (<lg) collapses to a single column.
+ *
+ * F5 CitationAnchor is injected into F4 BriefingPanel via `spanRenderer`,
+ * so features/briefing never imports from features/citations.
+ */
+
+import { BriefingPanel } from "@features/briefing";
+import { CitationAnchor } from "@features/citations";
+import { FeedGrid, useFeed } from "@features/feed";
+import { MediaPanel } from "@features/media-panel";
+import { VoicePlayer } from "@features/voice-player";
+import { WatchList } from "@features/watchlist";
+import { cn } from "@shared/lib";
+
+import { useBriefing } from "@features/briefing";
+import { useDashboard } from "../model/useDashboard";
+
+function renderCitationAnchor(spanId: string): React.ReactNode {
+  return <CitationAnchor spanId={spanId} />;
+}
+
+export function DashboardGrid() {
+  const { personaId, activePolicyId, activeBriefingId } = useDashboard();
+
+  if (personaId === null) {
+    return <NoPersonaNotice />;
+  }
+
+  return (
+    <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col gap-8 px-6 py-10">
+      <PersonaStrip personaId={personaId} />
+
+      <div className="grid gap-8 lg:grid-cols-[280px_1fr]">
+        {/* Sidebar: watchlist */}
+        <aside>
+          <WatchList personaId={personaId} />
+        </aside>
+
+        {/* Main pane: feed OR briefing+voice+media, depending on selection */}
+        <main className="flex flex-col gap-6">
+          {activePolicyId === null ? (
+            <FeedGrid personaId={personaId} />
+          ) : (
+            <BriefingColumn
+              personaId={personaId}
+              briefingId={activeBriefingId}
+            />
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+interface BriefingColumnProps {
+  personaId: string;
+  briefingId: string | null;
+}
+
+function BriefingColumn({ personaId, briefingId }: BriefingColumnProps) {
+  const { status, briefing, error } = useBriefing();
+  const { reload } = useFeed(personaId);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <BackToFeed onBack={reload} />
+
+      {status === "loading" && (
+        <div className="flex animate-pulse flex-col gap-3" aria-hidden="true">
+          <div className="h-5 w-3/5 rounded bg-clara-border" />
+          <div className="h-3 w-full rounded bg-clara-border" />
+          <div className="h-3 w-11/12 rounded bg-clara-border" />
+          <div className="h-3 w-4/5 rounded bg-clara-border" />
+        </div>
+      )}
+
+      {status === "error" && (
+        <p role="alert" className="text-sm text-clara-danger">
+          Briefing failed to load: {error ?? "unknown error"}
+        </p>
+      )}
+
+      {status === "ready" && briefing !== null && (
+        <article
+          className={cn(
+            "flex flex-col gap-6 rounded-card border border-clara-border",
+            "bg-clara-surface p-6",
+          )}
+        >
+          <BriefingPanel
+            briefing={briefing}
+            spanRenderer={renderCitationAnchor}
+          />
+          <VoicePlayer briefingId={briefingId ?? briefing.id} />
+        </article>
+      )}
+
+      <MediaPanel />
+    </div>
+  );
+}
+
+interface BackToFeedProps {
+  onBack: () => void;
+}
+
+function BackToFeed({ onBack }: BackToFeedProps) {
+  return (
+    <button
+      type="button"
+      onClick={onBack}
+      className={cn(
+        "inline-flex w-fit items-center gap-1 rounded-card",
+        "border border-clara-border bg-clara-surface px-3 py-1.5",
+        "font-mono text-[10px] uppercase tracking-widest text-clara-muted",
+        "transition hover:border-clara-accent hover:text-clara-text",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-clara-accent",
+      )}
+    >
+      ← back to briefing
+    </button>
+  );
+}
+
+function PersonaStrip({ personaId }: { personaId: string }) {
+  return (
+    <header className="flex flex-col gap-1 border-b border-clara-border pb-4">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-clara-muted">
+        Clara · Civic Briefing
+      </p>
+      <h1 className="text-2xl font-semibold text-clara-text sm:text-3xl">
+        What changed for you this week
+      </h1>
+      <p className="font-mono text-[10px] text-clara-muted">
+        persona · {personaId}
+      </p>
+    </header>
+  );
+}
+
+function NoPersonaNotice() {
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-xl flex-col items-start justify-center gap-4 px-6 py-16">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-clara-muted">
+        Clara · Dashboard
+      </p>
+      <h1 className="text-3xl font-semibold text-clara-text">
+        No persona yet.
+      </h1>
+      <p className="text-sm text-clara-muted">
+        Clara needs to know who you are before it can show you anything.
+        Start the 3-question onboarding to build your briefing.
+      </p>
+      <a
+        href="/onboarding"
+        className={cn(
+          "mt-2 inline-flex rounded-card bg-clara-accent px-4 py-2",
+          "text-sm font-medium text-white transition hover:bg-clara-accent/90",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-clara-accent",
+          "focus-visible:ring-offset-2 focus-visible:ring-offset-clara-bg",
+        )}
+      >
+        Start onboarding →
+      </a>
+    </main>
+  );
+}

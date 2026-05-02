@@ -1,0 +1,11 @@
+/**
+ * F3 Feed · public barrel.
+ *
+ * Only import from this barrel. Internal file structure is private —
+ * enforced by eslint-plugin-boundaries (no-private: error).
+ */
+
+export { FeedGrid } from "./ui/FeedGrid";
+export { PolicyCard } from "./ui/PolicyCard";
+export { useFeed } from "./model/useFeed";
+export type { FeedCard, Urgency } from "./api";

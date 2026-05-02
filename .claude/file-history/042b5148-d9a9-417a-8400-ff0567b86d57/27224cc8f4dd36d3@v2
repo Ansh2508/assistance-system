@@ -1,0 +1,48 @@
+"""F3 · Feed — top-3 policies ranked by relevance for a given persona.
+
+Ports: VectorStorePort, Repository[Policy], Repository[PersonaProfile], EventBus.
+Subscribes: persona.persisted. Publishes: feed.generated.
+HTTP surface:
+  * GET /api/feed?persona_id=<id> → FeedCard[]
+  * GET /api/events?persona_id=<id> → text/event-stream (SSE bridge)
+
+The SSE bridge is hosted here because feed already owns the persona-scoped
+read path. See features/feed/sse.py and docs/07-roadmap.md §5.2.
+"""
+
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+from clara.core.domain.persona import PersonaProfile
+from clara.core.domain.policy import Policy
+from clara.core.ports.bus import EventBus
+from clara.core.ports.repository import Repository
+from clara.core.ports.vector import VectorStorePort
+from clara.features.feed import handler as _handler
+from clara.features.feed.router import build_router
+from clara.features.feed.sse import SseBridge
+from clara.features.feed.use_case import FeedUseCase
+
+
+def wire(
+    app: FastAPI,
+    *,
+    bus: EventBus,
+    vector: VectorStorePort,
+    policies: Repository[Policy],
+    personas: Repository[PersonaProfile],
+    **_: object,
+) -> None:
+    use_case = FeedUseCase(
+        vector=vector,
+        policies=policies,
+        personas=personas,
+        bus=bus,
+    )
+    _handler.register(bus, use_case)
+
+    sse = SseBridge()
+    sse.attach(bus)
+
+    app.include_router(build_router(use_case, sse), prefix="/api", tags=["feed"])

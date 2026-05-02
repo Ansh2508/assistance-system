@@ -1,0 +1,18 @@
+"""GET /api/media/{policy_id} → MediaAnalysis."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter
+
+from clara.core.domain.media import MediaAnalysis
+from clara.features.media_analysis.use_case import MediaAnalysisUseCase
+
+
+def build_router(use_case: MediaAnalysisUseCase) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/media/{policy_id}", response_model=MediaAnalysis)
+    async def get_media(policy_id: str) -> MediaAnalysis:
+        return await use_case.analyze(policy_id)
+
+    return router

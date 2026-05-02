@@ -1,0 +1,41 @@
+"""F3 Feed — event handler registration.
+
+Subscribes to ``persona.persisted`` and delegates to ``FeedUseCase``. Matches
+the F2 handler pattern so every feature's subscription site looks the same.
+
+Handler exceptions are logged and swallowed — a feature that fails must not
+take down the feature that triggered it (the AsyncioEventBus also catches
+handler errors, but we log first so the structured context survives).
+"""
+
+from __future__ import annotations
+
+import structlog
+
+from clara.core.events.catalog import PersonaPersisted
+from clara.core.ports.bus import EventBus
+from clara.features.feed.use_case import FeedUseCase
+
+log = structlog.get_logger(__name__)
+
+
+def register(bus: EventBus, use_case: FeedUseCase) -> None:
+    async def on_persona_persisted(event: object) -> None:
+        if not isinstance(event, PersonaPersisted):
+            log.error(
+                "feed.unexpected_event",
+                feature="feed",
+                received=type(event).__name__,
+            )
+            return
+        try:
+            await use_case.precompute_for_persona(event.profile)
+        except Exception as exc:
+            log.error(
+                "feed.precompute_failed",
+                feature="feed",
+                persona_id=event.profile.id,
+                error=str(exc),
+            )
+
+    bus.subscribe(PersonaPersisted.NAME, on_persona_persisted)

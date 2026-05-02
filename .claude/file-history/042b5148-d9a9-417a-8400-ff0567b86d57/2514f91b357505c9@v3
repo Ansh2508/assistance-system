@@ -1,0 +1,185 @@
+"""WatchlistUseCase — generates 3 WatchItems per persona.
+
+Event flow (docs/07-roadmap.md §8.8):
+    persona.persisted  --(handler in __init__.wire)-->  generate_for_persona()
+      -> load PersonaProfile from repo (event is notification, repo is source of truth)
+      -> serialize persona to JSON, render WATCHLIST_SYSTEM + WATCHLIST_USER_TEMPLATE
+      -> call LLMPort.complete() with response_format=json_object
+      -> parse into LlmWatchlistResponse; on parse failure, retry ONCE with RETRY_SUFFIX
+      -> on double failure, soft-fail: log + publish empty WatchlistReady, no exception
+      -> on success, delete stale items for persona, upsert the 3 new ones
+      -> publish WatchlistReady with populated items
+
+Cache semantics (§8.8 "returns in <100ms"):
+    Repository[WatchItem] IS the cache. list_for_persona() is a pure read path —
+    it never calls the LLM. A GET request after a handler run reuses whatever
+    generate_for_persona wrote. No TTL, no invalidation layer; a fresh
+    persona.persisted overwrites.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import UTC, datetime
+
+import structlog
+from pydantic import ValidationError
+
+from clara.core.domain.persona import PersonaProfile
+from clara.core.domain.watch import WatchItem
+from clara.core.events.catalog import WatchlistReady
+from clara.core.ports.bus import EventBus
+from clara.core.ports.llm import LLMPort
+from clara.core.ports.repository import Repository
+from clara.features.watchlist.prompts import (
+    RETRY_SUFFIX,
+    WATCHLIST_SYSTEM,
+    WATCHLIST_USER_TEMPLATE,
+)
+from clara.features.watchlist.schemas import LlmWatchItem, LlmWatchlistResponse
+
+log = structlog.get_logger(__name__)
+
+
+class WatchlistUseCase:
+    def __init__(
+        self,
+        *,
+        llm: LLMPort,
+        watchitems: Repository[WatchItem],
+        personas: Repository[PersonaProfile],
+        bus: EventBus,
+    ) -> None:
+        self._llm = llm
+        self._watchitems = watchitems
+        self._personas = personas
+        self._bus = bus
+
+    async def generate_for_persona(self, persona_id: str) -> list[WatchItem]:
+        """Run Prompt 4 for a persona and persist the result.
+
+        Soft-fails on double-invalid JSON: logs, publishes empty WatchlistReady,
+        returns []. Never raises — a watchlist failure must not take down the
+        persona_builder handler that triggered us (see docs/03-architecture.md §4).
+        """
+        persona = await self._personas.get(persona_id)
+        if persona is None:
+            log.warning("watchlist.persona_not_found", persona_id=persona_id, feature="watchlist")
+            await self._publish_empty(persona_id)
+            return []
+
+        parsed = await self._invoke_llm_with_retry(persona)
+        if parsed is None:
+            await self._publish_empty(persona_id)
+            return []
+
+        now = datetime.now(UTC)
+        domain_items = [self._to_domain(persona_id, item, now) for item in parsed.items]
+        await self._overwrite(persona_id, domain_items)
+
+        await self._bus.publish(WatchlistReady(persona_id=persona_id, items=list(domain_items)))
+        log.info(
+            "watchlist.ready",
+            persona_id=persona_id,
+            n=len(domain_items),
+            feature="watchlist",
+        )
+        return domain_items
+
+    async def list_for_persona(self, persona_id: str) -> list[WatchItem]:
+        """Pure read path — repo IS the cache. Never calls the LLM."""
+        return await self._watchitems.list(filter={"persona_id": persona_id})
+
+    # ------------------------------------------------------------------ internals
+
+    async def _invoke_llm_with_retry(self, persona: PersonaProfile) -> LlmWatchlistResponse | None:
+        """Call the LLM; on parse failure retry once with RETRY_SUFFIX.
+
+        Returns None on double failure — caller soft-fails.
+        """
+        persona_json = persona.model_dump_json()
+        user_content = WATCHLIST_USER_TEMPLATE.format(persona_json=persona_json)
+        user_msg = {"role": "user", "content": user_content}
+
+        raw1 = await self._llm.complete(
+            system=WATCHLIST_SYSTEM,
+            messages=[user_msg],
+            response_format={"type": "json_object"},
+        )
+        parsed = _try_parse(raw1)
+        if parsed is not None:
+            return parsed
+
+        log.warning(
+            "watchlist.parse_failed_retrying",
+            persona_id=persona.id,
+            feature="watchlist",
+        )
+        raw2 = await self._llm.complete(
+            system=WATCHLIST_SYSTEM,
+            messages=[
+                user_msg,
+                {"role": "assistant", "content": raw1},
+                {"role": "user", "content": RETRY_SUFFIX},
+            ],
+            response_format={"type": "json_object"},
+        )
+        parsed = _try_parse(raw2)
+        if parsed is None:
+            log.error(
+                "watchlist.parse_failed_giving_up",
+                persona_id=persona.id,
+                feature="watchlist",
+            )
+        return parsed
+
+    async def _overwrite(self, persona_id: str, new_items: list[WatchItem]) -> None:
+        """Delete stale items for this persona, then upsert the new ones.
+
+        Without the delete step a re-run would leave 6 items (3 old + 3 new) since
+        deterministic IDs depend on created_at, which changes per run.
+        """
+        stale = await self._watchitems.list(filter={"persona_id": persona_id})
+        for old in stale:
+            await self._watchitems.delete(old.id)
+        for item in new_items:
+            await self._watchitems.upsert(item)
+
+    def _to_domain(
+        self, persona_id: str, llm_item: LlmWatchItem, created_at: datetime
+    ) -> WatchItem:
+        """Lift the parsed LLM DTO into a domain WatchItem with a deterministic id."""
+        return WatchItem(
+            id=_deterministic_id(persona_id, llm_item.topic, created_at),
+            persona_id=persona_id,
+            topic=llm_item.topic,
+            why_it_matters=llm_item.why_it_matters,
+            current_status=llm_item.current_status,
+            next_milestone=llm_item.next_milestone,
+            urgency=llm_item.urgency,
+            action_if_passes=llm_item.action_if_passes,
+            created_at=created_at,
+        )
+
+    async def _publish_empty(self, persona_id: str) -> None:
+        await self._bus.publish(WatchlistReady(persona_id=persona_id, items=[]))
+
+
+def _try_parse(raw: str) -> LlmWatchlistResponse | None:
+    """Parse `raw` as LlmWatchlistResponse. Returns None on any failure."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    try:
+        return LlmWatchlistResponse.model_validate(data)
+    except ValidationError:
+        return None
+
+
+def _deterministic_id(persona_id: str, topic: str, created_at: datetime) -> str:
+    """sha1-derived id. Same (persona, topic, created_at) → same id across runs."""
+    key = f"{persona_id}:{topic}:{created_at.isoformat()}".encode()
+    digest = hashlib.sha1(key, usedforsecurity=False).hexdigest()[:16]
+    return f"watch_{digest}"

@@ -1,0 +1,242 @@
+/**
+ * SSE client — unit tests.
+ *
+ * Stubs the global EventSource so we can fire synthetic backend events and
+ * assert the FE bus receives the correctly camelCased + translated payload.
+ * Also verifies malformed data frames are dropped silently.
+ */
+
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+
+import { bus } from "@shared/bus";
+import { openSseStream } from "../sseClient";
+
+type Listener = (evt: { data: string }) => void;
+
+class FakeEventSource {
+  public url: string;
+  public readyState = 0;
+  public listeners = new Map<string, Listener[]>();
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  addEventListener(event: string, handler: Listener): void {
+    const arr = this.listeners.get(event) ?? [];
+    arr.push(handler);
+    this.listeners.set(event, arr);
+  }
+
+  removeEventListener(): void {
+    /* noop */
+  }
+
+  close(): void {
+    this.readyState = 2;
+  }
+
+  // Test helper — fire an event onto all registered listeners.
+  fire(event: string, data: unknown): void {
+    const handlers = this.listeners.get(event) ?? [];
+    const dataStr = typeof data === "string" ? data : JSON.stringify(data);
+    for (const h of handlers) {
+      h({ data: dataStr });
+    }
+  }
+}
+
+describe("openSseStream", () => {
+  let originalEventSource: typeof globalThis.EventSource;
+  let fakeEventSource: FakeEventSource | null = null;
+
+  beforeEach(() => {
+    originalEventSource = globalThis.EventSource;
+    // @ts-expect-error — replacing with a test double
+    globalThis.EventSource = class extends FakeEventSource {
+      constructor(url: string) {
+        super(url);
+        fakeEventSource = this;
+      }
+    };
+  });
+
+  afterEach(() => {
+    globalThis.EventSource = originalEventSource;
+    fakeEventSource = null;
+  });
+
+  it("opens an EventSource at /events with the persona_id query param", () => {
+    const conn = openSseStream("persona_abc");
+    expect(fakeEventSource).not.toBeNull();
+    expect(fakeEventSource?.url).toContain("persona_abc");
+    expect(fakeEventSource?.url).toContain("events");
+    conn.close();
+  });
+
+  it("translates backend briefing.generated → FE briefing.ready", () => {
+    const listener = vi.fn();
+    const unsub = bus.on("briefing.ready", listener);
+
+    const conn = openSseStream("persona_test");
+    fakeEventSource?.fire("briefing.generated", {
+      briefing: {
+        id: "b_1",
+        persona_id: "persona_test",
+        policy_id: "p_1",
+        opening: "Hello world.",
+        paragraphs: [
+          { text: "First. [[span_1]]", cited_spans: ["span_1"] },
+          { text: "Second. [[span_2]]", cited_spans: ["span_2"] },
+        ],
+      },
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    const payload = listener.mock.calls[0]![0] as {
+      briefingId: string;
+      text: string;
+      spans: Array<{ spanId: string; surface: string }>;
+    };
+    expect(payload.briefingId).toBe("b_1");
+    expect(payload.text).toBe("Hello world.");
+    expect(payload.spans).toEqual([
+      { spanId: "span_1", surface: "span_1" },
+      { spanId: "span_2", surface: "span_2" },
+    ]);
+
+    unsub();
+    conn.close();
+  });
+
+  it("translates backend voice.ready → FE voice.ready with camelCase", () => {
+    const listener = vi.fn();
+    const unsub = bus.on("voice.ready", listener);
+
+    const conn = openSseStream("persona_test");
+    fakeEventSource?.fire("voice.ready", {
+      briefing_id: "b_7",
+      audio_url: "/api/voice/b_7",
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      briefingId: "b_7",
+      audioUrl: "/api/voice/b_7",
+    });
+
+    unsub();
+    conn.close();
+  });
+
+  it("translates backend citations.resolved → FE citations.resolved map", () => {
+    const listener = vi.fn();
+    const unsub = bus.on("citations.resolved", listener);
+
+    const conn = openSseStream("persona_test");
+    fakeEventSource?.fire("citations.resolved", {
+      briefing_id: "b_1",
+      resolved: [
+        {
+          id: "cit_1",
+          span: { span_id: "span_1", surface: "§14 AufenthG" },
+          resolved_text: "Ukrainian nationals may apply directly.",
+        },
+      ],
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      briefingId: "b_1",
+      resolved: {
+        span_1: "Ukrainian nationals may apply directly.",
+      },
+    });
+
+    unsub();
+    conn.close();
+  });
+
+  it("translates backend media.analyzed → FE media.analyzed with camelCase", () => {
+    const listener = vi.fn();
+    const unsub = bus.on("media.analyzed", listener);
+
+    const conn = openSseStream("persona_test");
+    fakeEventSource?.fire("media.analyzed", {
+      policy_id: "p_1",
+      analysis: {
+        policy_id: "p_1",
+        official_framing: "official",
+        media_focus: "focus",
+        hidden_impact: "impact",
+        watch_out_for: "warning",
+      },
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      policyId: "p_1",
+      analysis: {
+        policyId: "p_1",
+        officialFraming: "official",
+        mediaFocus: "focus",
+        hiddenImpact: "impact",
+        watchOutFor: "warning",
+      },
+    });
+
+    unsub();
+    conn.close();
+  });
+
+  it("translates backend watchlist.ready → FE watchlist.ready items[]", () => {
+    const listener = vi.fn();
+    const unsub = bus.on("watchlist.ready", listener);
+
+    const conn = openSseStream("persona_test");
+    fakeEventSource?.fire("watchlist.ready", {
+      persona_id: "persona_test",
+      items: [
+        {
+          id: "w_1",
+          topic: "Bürgergeld reform",
+          next_milestone: "2026-05-14",
+          urgency: "high",
+        },
+      ],
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      personaId: "persona_test",
+      items: [
+        {
+          id: "w_1",
+          topic: "Bürgergeld reform",
+          nextMilestone: "2026-05-14",
+          urgency: "high",
+        },
+      ],
+    });
+
+    unsub();
+    conn.close();
+  });
+
+  it("drops malformed frames silently without crashing", () => {
+    const listener = vi.fn();
+    const unsub = bus.on("voice.ready", listener);
+
+    const conn = openSseStream("persona_test");
+    // Invalid JSON — must NOT throw, must NOT emit.
+    fakeEventSource?.fire("voice.ready", "{ this is not json");
+
+    expect(listener).not.toHaveBeenCalled();
+
+    unsub();
+    conn.close();
+  });
+
+  it(".close() stops the underlying EventSource", () => {
+    const conn = openSseStream("persona_test");
+    expect(fakeEventSource?.readyState).toBe(0);
+    conn.close();
+    expect(fakeEventSource?.readyState).toBe(2);
+  });
+});

@@ -1,0 +1,39 @@
+"""F8 Watchlist — event handler registration.
+
+Subscribes to ``persona.persisted`` and delegates to ``WatchlistUseCase``.
+Matches the F2 / F3 handler pattern so every feature's subscription site
+looks the same. Handler exceptions are logged and swallowed — a feature
+that fails must not take down the feature that triggered it.
+"""
+
+from __future__ import annotations
+
+import structlog
+
+from clara.core.events.catalog import PersonaPersisted
+from clara.core.ports.bus import EventBus
+from clara.features.watchlist.use_case import WatchlistUseCase
+
+log = structlog.get_logger(__name__)
+
+
+def register(bus: EventBus, use_case: WatchlistUseCase) -> None:
+    async def on_persona_persisted(event: object) -> None:
+        if not isinstance(event, PersonaPersisted):
+            log.error(
+                "watchlist.unexpected_event",
+                feature="watchlist",
+                received=type(event).__name__,
+            )
+            return
+        try:
+            await use_case.generate_for_persona(event.profile)
+        except Exception as exc:
+            log.error(
+                "watchlist.generate_failed",
+                feature="watchlist",
+                persona_id=event.profile.id,
+                error=str(exc),
+            )
+
+    bus.subscribe(PersonaPersisted.NAME, on_persona_persisted)

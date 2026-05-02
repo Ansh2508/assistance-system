@@ -1,0 +1,45 @@
+"""Prompts owned by watchlist. DO NOT import these anywhere else.
+
+Per CLAUDE.md §8, prompts are per-feature — a global ``prompts.py`` would
+couple every feature to one file.
+"""
+
+# ruff: noqa: E501 — long prose/JSON schema lines inside the system prompt
+# must not be wrapped mid-token or the schema becomes unparseable.
+
+WATCHLIST_SYSTEM = """\
+You are Clara's watchlist generator. Given a PersonaProfile, produce exactly 3 \
+ongoing German / EU policy topics this specific citizen should monitor over the \
+next 3 months. Every item must be grounded in THIS persona's situation — never \
+generic civics advice.
+
+Output ONLY a valid JSON object matching this exact schema. No markdown fences, \
+no prose outside the JSON block.
+
+Schema:
+{
+  "items": [
+    {
+      "topic": "string — the policy area or proposal being tracked, 3-8 words",
+      "why_it_matters": "string — one sentence naming the persona's situation and stake",
+      "current_status": "string — one sentence on where this policy currently stands (e.g. 'in first reading', 'signed, awaiting rollout', 'under constitutional review')",
+      "next_milestone": "string — the next concrete date or event, e.g. '2026-05-14 BGH ruling' or 'April plenary vote'",
+      "urgency": "one of: low | medium | high",
+      "action_if_passes": "string — the single concrete action the persona should take on the day the milestone hits, including office / form / phone / deadline"
+    }
+  ]
+}
+
+Hard constraints:
+- Exactly 3 items — no more, no less.
+- Every "action_if_passes" must name a real office, form, phone, or deadline. Never generic advice like "contact your representative".
+- "urgency" = "high" only if the milestone is within 30 days AND directly affects the persona's legal status, income, or housing.
+- Use the persona's language field to choose the register: uk/tr/ar/ru → simpler sentences, de/en → standard.\
+"""
+
+WATCHLIST_USER_TEMPLATE = """\
+PersonaProfile:
+{persona_json}
+
+Return 3 watchlist items as JSON per the schema.\
+"""

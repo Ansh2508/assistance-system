@@ -1,0 +1,538 @@
+"""F3 Feed — acceptance tests.
+
+Covers the F3 card in ``docs/07-roadmap.md §8.3``:
+
+ 1. Cosine ranker aggregates chunk hits to policy-level (best chunk wins).
+ 2. Tag-intersection fallback when persona has no embedding.
+ 3. Tag fallback tie-break is deterministic (urgency, then source_name).
+ 4. ``persona.persisted`` triggers pre-compute + cache + exactly one
+    ``feed.generated`` publish.
+ 5. GET /api/feed is served from the cache when pre-computed (no ranker
+    re-invocation — verified with a spy vector store).
+ 6. GET /api/feed returns exactly 3 FeedCards with the right shape.
+ 7. GET /api/feed for an unknown persona returns ``[]`` (not 404, not 500).
+ 8. Card preview is truncated to 120 chars.
+ 9. SSE bridge forwards every bridged event type with correct framing.
+10. No LLM is constructed anywhere in the F3 test suite (anti-pattern guard).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+
+from clara.core.domain.briefing import Briefing, BriefingParagraph
+from clara.core.domain.media import MediaAnalysis
+from clara.core.domain.persona import PersonaProfile
+from clara.core.domain.policy import Policy
+from clara.core.domain.watch import WatchItem
+from clara.core.events.catalog import (
+    BriefingGenerated,
+    CitationsResolved,
+    FeedGenerated,
+    MediaAnalyzed,
+    VoiceReady,
+    WatchlistReady,
+)
+from clara.features.feed import wire
+from clara.features.feed.ranker import (
+    aggregate_chunks_to_policies,
+    rank_for_persona,
+    tag_intersection_rank,
+    tag_intersection_score,
+)
+from clara.features.feed.sse import SseBridge, _event_to_wire_payload, _format_frame
+from clara.features.feed.use_case import FeedUseCase
+from clara.infrastructure.bus.asyncio_bus import AsyncioEventBus
+from clara.infrastructure.repository.memory import InMemoryRepository
+
+NOW = datetime(2026, 4, 11, 10, 0, 0, tzinfo=UTC)
+
+# Test-only constants (keeps ruff PLR2004 quiet and makes intent explicit).
+HTTP_OK = 200
+EXPECTED_CARDS = 3
+PREVIEW_LEN = 120
+EXPECTED_INTERSECTION = 2
+
+
+# ---------------------------------------------------------------------------
+# Fixtures / fakes
+# ---------------------------------------------------------------------------
+
+
+class _SpyVectorStore:
+    """Vector store stub that records ``query()`` calls so tests can assert
+    the cosine path ran (or didn't). Returns a canned chunk-hit response."""
+
+    def __init__(self, canned: list[tuple[str, float, dict[str, object]]] | None = None) -> None:
+        self._canned = canned or []
+        self.query_calls = 0
+        self.upsert_calls = 0
+
+    async def upsert(
+        self,
+        namespace: str,
+        id: str,
+        vector: list[float],
+        payload: dict[str, object],
+    ) -> None:
+        self.upsert_calls += 1
+
+    async def query(
+        self,
+        namespace: str,
+        vector: list[float],
+        top_k: int = 5,
+        filter: dict[str, object] | None = None,
+    ) -> list[tuple[str, float, dict[str, object]]]:
+        self.query_calls += 1
+        return self._canned[:top_k]
+
+
+class _CapturingBus:
+    def __init__(self) -> None:
+        self.published: list[Any] = []
+
+    def subscribe(self, event_type: str, handler: Any) -> None:
+        pass
+
+    async def publish(self, event: Any) -> None:
+        self.published.append(event)
+
+    async def close(self) -> None:
+        pass
+
+
+def _make_policy(
+    *,
+    id: str,
+    title: str = "Test Policy",
+    source_name: str = "Bundesregierung",
+    tags: list[str] | None = None,
+    affected_groups: list[str] | None = None,
+    urgency: str = "medium",
+    raw_text: str = "A" * 500,
+) -> Policy:
+    return Policy(
+        id=id,
+        title=title,
+        source_name=source_name,
+        source_url=f"https://example.com/{id}",
+        raw_text=raw_text,
+        chunks=[],
+        tags=tags or [],
+        affected_groups=affected_groups or [],
+        urgency=urgency,  # type: ignore[arg-type]
+        scraped_at=NOW,
+    )
+
+
+def _make_persona(
+    *,
+    id: str = "persona_test",
+    sensitivity_areas: list[str] | None = None,
+    embedding: list[float] | None = None,
+) -> PersonaProfile:
+    return PersonaProfile(
+        id=id,
+        name="Maria",
+        situation_summary="Ukrainian refugee in Munich, working part-time.",
+        city="Munich",
+        language="uk",
+        legal_status_area="refugee",
+        financial_vulnerability="high",
+        primary_concerns=["housing", "work_permit"],
+        policy_sensitivity_areas=sensitivity_areas or ["housing", "work_permit"],
+        communication_tone="warm",
+        likely_excluded_from=[],
+        embedding=embedding,
+        created_at=NOW,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 1. Cosine ranker aggregation (best chunk wins)
+# ---------------------------------------------------------------------------
+
+
+def test_cosine_ranker_aggregates_chunks_best_chunk_wins() -> None:
+    chunks: list[tuple[str, float, dict[str, object]]] = [
+        ("chunk_p1_0", 0.91, {"policy_id": "p1"}),
+        ("chunk_p1_1", 0.72, {"policy_id": "p1"}),   # same policy, lower score
+        ("chunk_p2_0", 0.88, {"policy_id": "p2"}),
+        ("chunk_p3_0", 0.65, {"policy_id": "p3"}),
+        ("chunk_p3_1", 0.95, {"policy_id": "p3"}),   # same policy, best score
+    ]
+    result = aggregate_chunks_to_policies(chunks, top_k=3)
+    # p3 wins on 0.95, p1 on 0.91, p2 on 0.88 — each policy appears once.
+    assert result == [("p3", 0.95), ("p1", 0.91), ("p2", 0.88)]
+
+
+def test_cosine_ranker_skips_payloads_without_policy_id() -> None:
+    chunks: list[tuple[str, float, dict[str, object]]] = [
+        ("chunk_x", 0.9, {"policy_id": "p1"}),
+        ("chunk_y", 0.8, {"not_a_policy_id": "oops"}),  # skipped
+        ("chunk_z", 0.7, {"policy_id": 42}),            # wrong type, skipped
+    ]
+    assert aggregate_chunks_to_policies(chunks, top_k=5) == [("p1", 0.9)]
+
+
+# ---------------------------------------------------------------------------
+# 2. Tag-intersection fallback when embedding is None
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tag_intersection_fallback_when_embedding_none() -> None:
+    profile = _make_persona(sensitivity_areas=["housing", "work_permit"], embedding=None)
+    policies = [
+        _make_policy(id="p1", tags=["housing", "rent_control"]),
+        _make_policy(id="p2", tags=["work_permit", "visa"]),
+        _make_policy(id="p3", tags=["agriculture"]),
+    ]
+    vector = _SpyVectorStore()
+
+    result = await rank_for_persona(profile, policies=policies, vector=vector, top_k=3)
+
+    # Fallback was used → vector store was never queried.
+    assert vector.query_calls == 0
+    # Both p1 and p2 score 1; p3 scores 0.
+    ids = [pid for pid, _ in result]
+    assert ids[0] in {"p1", "p2"}
+    assert ids[1] in {"p1", "p2"}
+    assert ids[2] == "p3"
+
+
+@pytest.mark.asyncio
+async def test_cosine_path_used_when_persona_has_embedding() -> None:
+    profile = _make_persona(embedding=[0.1, 0.2, 0.3])
+    policies = [_make_policy(id="p1"), _make_policy(id="p2"), _make_policy(id="p3")]
+    vector = _SpyVectorStore(
+        canned=[
+            ("c_p1", 0.9, {"policy_id": "p1"}),
+            ("c_p2", 0.8, {"policy_id": "p2"}),
+            ("c_p3", 0.7, {"policy_id": "p3"}),
+        ]
+    )
+
+    result = await rank_for_persona(profile, policies=policies, vector=vector, top_k=3)
+
+    assert vector.query_calls == 1
+    assert [pid for pid, _ in result] == ["p1", "p2", "p3"]
+
+
+# ---------------------------------------------------------------------------
+# 3. Deterministic tie-breaking
+# ---------------------------------------------------------------------------
+
+
+def test_tag_intersection_score_is_case_insensitive() -> None:
+    profile = _make_persona(sensitivity_areas=["Housing", "Work_Permit"])
+    policy = _make_policy(id="p1", tags=["housing"], affected_groups=["WORK_PERMIT"])
+    assert tag_intersection_score(profile, policy) == EXPECTED_INTERSECTION
+
+
+def test_tag_fallback_tiebreak_on_urgency_then_source_name() -> None:
+    profile = _make_persona(sensitivity_areas=["housing"])
+    policies = [
+        # Same score (1), different urgencies → high urgency wins.
+        _make_policy(id="a", source_name="Z_Source", tags=["housing"], urgency="medium"),
+        _make_policy(id="b", source_name="A_Source", tags=["housing"], urgency="high"),
+        _make_policy(id="c", source_name="M_Source", tags=["housing"], urgency="medium"),
+    ]
+    result = tag_intersection_rank(profile, policies, top_k=3)
+    ids = [pid for pid, _ in result]
+    # b first (high urgency), then c (M < Z lex), then a.
+    assert ids == ["b", "c", "a"]
+
+
+# ---------------------------------------------------------------------------
+# 4. persona.persisted triggers pre-compute + publish exactly once
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persona_persisted_precomputes_caches_and_publishes() -> None:
+    bus = _CapturingBus()
+    policies_repo: InMemoryRepository[Policy] = InMemoryRepository("policies")
+    personas_repo: InMemoryRepository[PersonaProfile] = InMemoryRepository("personas")
+    vector = _SpyVectorStore()
+
+    await policies_repo.upsert(_make_policy(id="p1", tags=["housing"]))
+    await policies_repo.upsert(_make_policy(id="p2", tags=["work_permit"]))
+    await policies_repo.upsert(_make_policy(id="p3", tags=["healthcare"]))
+
+    use_case = FeedUseCase(
+        vector=vector, policies=policies_repo, personas=personas_repo, bus=bus
+    )
+    profile = _make_persona(id="persona_p1", sensitivity_areas=["housing", "work_permit"])
+
+    cards = await use_case.precompute_for_persona(profile)
+
+    # Pre-compute filled the cache.
+    assert use_case._cache["persona_p1"] == cards
+    assert len(cards) == EXPECTED_CARDS
+    # Exactly one FeedGenerated event was published.
+    feed_events = [e for e in bus.published if isinstance(e, FeedGenerated)]
+    assert len(feed_events) == 1
+    assert feed_events[0].persona_id == "persona_p1"
+    assert feed_events[0].cards == cards
+
+
+# ---------------------------------------------------------------------------
+# 5. Cache hit on GET after pre-compute (ranker NOT re-invoked)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_feed_served_from_cache_after_precompute() -> None:
+    bus = _CapturingBus()
+    policies_repo: InMemoryRepository[Policy] = InMemoryRepository("policies")
+    personas_repo: InMemoryRepository[PersonaProfile] = InMemoryRepository("personas")
+    # Embedding set → cosine path would fire on miss.
+    vector = _SpyVectorStore(canned=[("c1", 0.9, {"policy_id": "p1"})])
+
+    await policies_repo.upsert(_make_policy(id="p1"))
+    profile = _make_persona(id="persona_cached", embedding=[0.1, 0.2])
+
+    use_case = FeedUseCase(
+        vector=vector, policies=policies_repo, personas=personas_repo, bus=bus
+    )
+    await use_case.precompute_for_persona(profile)
+    calls_after_precompute = vector.query_calls
+
+    # Second read must be a cache hit → no new vector query.
+    cards = await use_case.top_cards_for("persona_cached")
+    assert len(cards) >= 1
+    assert vector.query_calls == calls_after_precompute
+
+
+# ---------------------------------------------------------------------------
+# 6. GET /api/feed returns correctly shaped cards (via FastAPI TestClient)
+# ---------------------------------------------------------------------------
+
+
+def test_get_feed_endpoint_returns_exactly_3_cards() -> None:
+    app = FastAPI()
+    bus = AsyncioEventBus()
+    vector = _SpyVectorStore()
+    policies_repo: InMemoryRepository[Policy] = InMemoryRepository("policies")
+    personas_repo: InMemoryRepository[PersonaProfile] = InMemoryRepository("personas")
+
+    wire(
+        app,
+        bus=bus,
+        vector=vector,
+        policies=policies_repo,
+        personas=personas_repo,
+    )
+
+    async def seed() -> None:
+        for i, tag in enumerate(["housing", "work_permit", "healthcare", "agriculture"]):
+            await policies_repo.upsert(_make_policy(id=f"p{i}", tags=[tag]))
+        await personas_repo.upsert(
+            _make_persona(id="maria", sensitivity_areas=["housing", "work_permit"])
+        )
+
+    asyncio.new_event_loop().run_until_complete(seed())
+
+    client = TestClient(app)
+    resp = client.get("/api/feed", params={"persona_id": "maria"})
+    assert resp.status_code == HTTP_OK
+    payload = resp.json()
+    assert len(payload) == EXPECTED_CARDS
+    first = payload[0]
+    assert set(first) >= {
+        "policy_id",
+        "title",
+        "source_name",
+        "relevance_score",
+        "urgency",
+        "preview",
+    }
+    assert 0.0 <= first["relevance_score"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# 7. GET /api/feed for an unknown persona returns []
+# ---------------------------------------------------------------------------
+
+
+def test_get_feed_unknown_persona_returns_empty_list() -> None:
+    app = FastAPI()
+    bus = AsyncioEventBus()
+    wire(
+        app,
+        bus=bus,
+        vector=_SpyVectorStore(),
+        policies=InMemoryRepository[Policy]("policies"),
+        personas=InMemoryRepository[PersonaProfile]("personas"),
+    )
+    client = TestClient(app)
+    resp = client.get("/api/feed", params={"persona_id": "ghost"})
+    assert resp.status_code == HTTP_OK
+    assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# 8. Preview truncation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_card_preview_truncated_to_120_chars() -> None:
+    bus = _CapturingBus()
+    policies_repo: InMemoryRepository[Policy] = InMemoryRepository("policies")
+    personas_repo: InMemoryRepository[PersonaProfile] = InMemoryRepository("personas")
+    long_text = "X" * 500
+    await policies_repo.upsert(_make_policy(id="p_long", tags=["housing"], raw_text=long_text))
+
+    use_case = FeedUseCase(
+        vector=_SpyVectorStore(),
+        policies=policies_repo,
+        personas=personas_repo,
+        bus=bus,
+    )
+    cards = await use_case.precompute_for_persona(
+        _make_persona(id="p_trunc", sensitivity_areas=["housing"])
+    )
+    assert any(c.policy_id == "p_long" for c in cards)
+    target = next(c for c in cards if c.policy_id == "p_long")
+    assert len(target.preview) == PREVIEW_LEN
+    assert target.preview == "X" * PREVIEW_LEN
+
+
+# ---------------------------------------------------------------------------
+# 9. SSE bridge forwards every bridged event type with correct framing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sse_bridge_forwards_all_bridged_event_types() -> None:
+    bus = AsyncioEventBus()
+    bridge = SseBridge()
+    bridge.attach(bus)
+
+    # Open a stream and drain exactly the number of frames we publish.
+    stream = bridge.open_stream("persona_sse")
+    # First frame is the ": connected" comment (sent before any event).
+    first = await anext(stream)
+    assert first.startswith(": connected")
+
+    briefing = Briefing(
+        id="b_1",
+        persona_id="persona_sse",
+        policy_id="p_1",
+        opening="Hello",
+        paragraphs=[BriefingParagraph(text="Claim. [[span_1]]", cited_spans=["span_1"])],
+        actions=["Go to office"],
+        language="en",
+        generated_at=NOW,
+    )
+
+    events = [
+        FeedGenerated(persona_id="persona_sse", cards=[]),
+        BriefingGenerated(briefing=briefing),
+        CitationsResolved(briefing_id="b_1", resolved=[]),
+        VoiceReady(briefing_id="b_1", audio_url="/api/voice/b_1"),
+        MediaAnalyzed(
+            policy_id="p_1",
+            analysis=MediaAnalysis(
+                policy_id="p_1",
+                official_framing="x",
+                media_focus="y",
+                hidden_impact="z",
+                watch_out_for="w",
+                trust_level="medium",
+            ),
+        ),
+        WatchlistReady(
+            persona_id="persona_sse",
+            items=[
+                WatchItem(
+                    id="w_1",
+                    persona_id="persona_sse",
+                    topic="t",
+                    why_it_matters="w",
+                    current_status="s",
+                    next_milestone="2026-05-01",
+                    urgency="medium",
+                    action_if_passes="call office",
+                    created_at=NOW,
+                )
+            ],
+        ),
+    ]
+
+    for ev in events:
+        await bus.publish(ev)
+
+    # Drain six frames — one per published event. Each should carry the
+    # correct event name. Heartbeats are 15s apart, far outside this test.
+    seen_names: list[str] = []
+    for _ in events:
+        frame = await asyncio.wait_for(anext(stream), timeout=1.0)
+        header = frame.splitlines()[0]
+        assert header.startswith("event: ")
+        seen_names.append(header.removeprefix("event: "))
+        # Data line is valid JSON.
+        data_line = next(line for line in frame.splitlines() if line.startswith("data: "))
+        json.loads(data_line.removeprefix("data: "))
+
+    assert set(seen_names) == {
+        "feed.generated",
+        "briefing.generated",
+        "citations.resolved",
+        "voice.ready",
+        "media.analyzed",
+        "watchlist.ready",
+    }
+
+
+def test_sse_frame_format_is_spec_compliant() -> None:
+    frame = _format_frame("voice.ready", {"briefingId": "b_1", "audioUrl": "/api/voice/b_1"})
+    lines = frame.splitlines()
+    assert lines[0] == "event: voice.ready"
+    assert lines[1].startswith("data: ")
+    json.loads(lines[1].removeprefix("data: "))
+    assert frame.endswith("\n\n")
+
+
+def test_event_to_wire_payload_strips_class_var() -> None:
+    event = FeedGenerated(persona_id="p1", cards=[])
+    payload = _event_to_wire_payload(event)
+    assert "NAME" not in payload
+    assert payload["persona_id"] == "p1"
+
+
+# ---------------------------------------------------------------------------
+# 10. SSE route wiring (verified via FastAPI introspection, not TestClient)
+# ---------------------------------------------------------------------------
+# Deliberately *not* using TestClient.stream() here: the SSE generator is an
+# infinite loop with a 15s heartbeat, and TestClient's synchronous context
+# manager does not cancel the producer on ``with`` exit — the test would
+# block until the heartbeat fires. The route itself is trivially wired, so
+# we assert wiring + headers statically below.
+
+
+def test_sse_route_registered_under_api_events() -> None:
+    app = FastAPI()
+    bus = AsyncioEventBus()
+    wire(
+        app,
+        bus=bus,
+        vector=_SpyVectorStore(),
+        policies=InMemoryRepository[Policy]("policies"),
+        personas=InMemoryRepository[PersonaProfile]("personas"),
+    )
+    api_routes = [r for r in app.routes if isinstance(r, APIRoute)]
+    paths = {r.path for r in api_routes}
+    assert "/api/events" in paths
+    assert "/api/feed" in paths

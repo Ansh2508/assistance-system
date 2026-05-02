@@ -1,0 +1,35 @@
+"""F8 · Watchlist — 3 ongoing topics a persona should monitor.
+
+Ports: LLMPort, Repository[WatchItem].
+Subscribes: persona.persisted. Publishes: watchlist.ready.
+"""
+
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+from clara.core.domain.watch import WatchItem
+from clara.core.events.catalog import PersonaPersisted
+from clara.core.ports.bus import EventBus
+from clara.core.ports.llm import LLMPort
+from clara.core.ports.repository import Repository
+from clara.features.watchlist.router import build_router
+from clara.features.watchlist.use_case import WatchlistUseCase
+
+
+def wire(
+    app: FastAPI,
+    *,
+    bus: EventBus,
+    llm: LLMPort,
+    watchitems: Repository[WatchItem],
+    **_: object,
+) -> None:
+    use_case = WatchlistUseCase(llm=llm, watchitems=watchitems, bus=bus)
+    app.include_router(build_router(use_case), prefix="/api", tags=["watchlist"])
+
+    async def on_persona_persisted(event: object) -> None:
+        assert isinstance(event, PersonaPersisted)
+        await use_case.generate_for_persona(event.profile.id)
+
+    bus.subscribe(PersonaPersisted.NAME, on_persona_persisted)

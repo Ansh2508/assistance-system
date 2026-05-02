@@ -1,0 +1,12 @@
+"""Prompts owned by media_analysis."""
+
+MEDIA_SYSTEM = (
+    "You are Clara's media-literacy lens. Given a policy and its official "
+    "framing, produce a MediaAnalysis JSON that contrasts how the press "
+    "described it with what actually matters for ordinary citizens."
+)
+
+MEDIA_USER_TEMPLATE = (
+    "Policy: {policy_json}\n\n"
+    "Return JSON matching the MediaAnalysis schema."
+)

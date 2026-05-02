@@ -1,0 +1,41 @@
+"""F7 Media Analysis — event handler registration.
+
+Subscribes to ``card.selected`` and delegates to
+``MediaAnalysisUseCase.analyze_for_card_selected`` — which always publishes
+``media.analyzed`` (even on cache hits) so the FE side panel re-hydrates on
+repeat card taps. See card §8.7.
+
+Handler exceptions are logged and swallowed — consistent with F2/F3/F8.
+"""
+
+from __future__ import annotations
+
+import structlog
+
+from clara.core.events.catalog import CardSelected
+from clara.core.ports.bus import EventBus
+from clara.features.media_analysis.use_case import MediaAnalysisUseCase
+
+log = structlog.get_logger(__name__)
+
+
+def register(bus: EventBus, use_case: MediaAnalysisUseCase) -> None:
+    async def on_card_selected(event: object) -> None:
+        if not isinstance(event, CardSelected):
+            log.error(
+                "media.unexpected_event",
+                feature="media_analysis",
+                received=type(event).__name__,
+            )
+            return
+        try:
+            await use_case.analyze_for_card_selected(event)
+        except Exception as exc:
+            log.error(
+                "media.analyze_failed",
+                feature="media_analysis",
+                policy_id=event.policy_id,
+                error=str(exc),
+            )
+
+    bus.subscribe(CardSelected.NAME, on_card_selected)
