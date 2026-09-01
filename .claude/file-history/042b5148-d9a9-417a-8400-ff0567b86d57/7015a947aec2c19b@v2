@@ -1,2 +1,0 @@
-export { DashboardGrid } from "./ui/DashboardGrid";
-export { useDashboard } from "./model/useDashboard";

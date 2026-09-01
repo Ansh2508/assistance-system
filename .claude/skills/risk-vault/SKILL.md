@@ -1,4 +1,4 @@
-﻿---
+---
 name: risk-vault
 description: Build Risk Vault YAML files (v2.0 RiskObjects). Use when creating vertical configs, hazard categories, or legal banks.
 ---
@@ -69,3 +69,38 @@ Must pass with exit code 0.
 5. Verify legal_refs match German law
 6. Run ./check.sh
 7. Report done - do NOT commit
+
+## Why the Minimums Are Non-Negotiable, Not Just Strict
+
+The "Non-Negotiable" counts above (min 4 controls, min 6 FALSCH/RICHTIG,
+8+ NIEMALS, etc.) aren't arbitrary strictness — they're the same
+principle as **Design by Contract** (Meyer, 1992): a requirement the
+schema/validator enforces mechanically is one that survives a rushed
+session; a requirement that's only a convention gets skipped under
+deadline pressure. `./check.sh` failing on a missing count is the
+contract being enforced, not a formality to work around.
+
+Two checks worth running specifically because this skill generates
+structured YAML with many field names:
+
+- **A count can be satisfied by padding, not by real content.** Five
+  FALSCH/RICHTIG examples that are trivial variants of one real example
+  is a vacuous pass — it raises the count without adding a real
+  counterexample. Where practical, spot-check that a new entry actually
+  changes what the check would catch (would this FALSCH example be
+  caught without the RICHTIG example next to it? if the check would
+  behave identically either way, it isn't testing anything).
+- **A field name that "sounds right" for a RiskObject's purpose can
+  still be wrong.** Before writing a new field key into a RiskObject
+  YAML, confirm it against the actual v2.0 schema/gold standard, not
+  against what a similar field is usually called. This is the same
+  failure mode as a hallucinated attribute name on a class ("Hallucinated
+  Objects," Tambon et al., 2024) — the guess is dangerous precisely
+  because it's close to right, not because it's obviously wrong.
+
+If a fault-injection tool is available (mutmut/cosmic-ray equivalent),
+running it against the legal-critical validation paths (STOP order,
+FUNDSTELLE typing, legal_ref format) is high-value before trusting
+`./check.sh` green on those paths specifically — the same
+"does this check actually catch a real fault" question, made mechanical
+rather than judged by eye.

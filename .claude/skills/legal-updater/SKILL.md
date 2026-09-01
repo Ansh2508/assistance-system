@@ -1,4 +1,4 @@
-﻿---
+---
 name: legal-updater
 description: Check and update legal references in YAML files. Use when verifying ADR versions, DGUV updates.
 ---
@@ -36,3 +36,28 @@ Verify and update legal references across all YAML verticals.
 ## When Complete
 Report which refs are current, which need updating, which are hallucinated.
 Do NOT commit. Report findings only.
+
+## Tag Every Claim (added from real cross-country legal research)
+
+When verifying a reference or researching a new one, tag it so a reader
+can tell what was actually checked:
+- `[FETCHED-FULL]` — read the primary source itself (gesetze-im-internet.de,
+  dguv.de, an actual court decision), not a summary of it
+- `[SECONDARY]` — only a summary, commentary, or a source citing the
+  primary was available
+- `[NOT VERIFIED]` — could not confirm either way
+- `[DOES NOT RESOLVE]` — the source was checked and does NOT support the
+  claim, even though it looked like it should
+
+This caught real errors in a different domain this session: a widely
+repeated claim about a legal rule turned out to be backwards once the
+actual court ruling was read in full rather than trusted from a summary
+— the correct reading was the opposite of what secondary sources
+implied, and reversed a design decision that had been treated as
+settled. "Verify against the primary source" already covers this in
+principle; the tags make it checkable in the output, not just implied.
+
+If a claim can only be tagged `[SECONDARY]` or `[NOT VERIFIED]` and it
+matters (changes a legal_ref, changes STOP-order guidance), say so
+explicitly in the report rather than presenting it with the same
+confidence as a `[FETCHED-FULL]` finding.
