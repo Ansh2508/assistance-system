@@ -32,6 +32,57 @@ steady state, hypothesize it holds, inject the real variable, try to
 disprove it. Don't trust the claim; run the experiment on your own system
 or a faithful model of it.
 
+**The pass bar is YOUR actual required scale (current + realistic growth),
+not an arbitrary larger one.** A design that fails at n=50,000 but works
+cleanly at n=20,000 is not disqualified if n=20,000 is the real target
+(current scale plus the documented growth scenario, per
+`synthetic_data_for_validation`) — ship it with the scale ceiling stated
+explicitly, not silently, and keep improving it later. Don't hold a design
+to an untested-need scale nobody asked for; don't hide a real scale limit
+either. Both failure modes are real: over-demanding kills useful designs,
+under-disclosing ships a landmine.
+
+## When there's no primary source to validate — invention, not a dead end
+
+Sometimes step 1 turns up nothing: real research (including a full
+`deep-cross-domain-research` pass) finds zero precedent for the thing you
+need. That is not a stop condition. Per the standing project rule (see
+`cross_domain_first_principles_invention` memory, set explicitly because a
+research pass came back empty for exactly this reason), inventing a
+mechanism is sanctioned — but it still has to earn trust, just via a
+different route than steps 1-2 above:
+
+- **Ground it in named, real, established mechanisms from OTHER fields**,
+  not vibes. Real examples that have worked as transplants: a distributed-
+  systems pattern (single write-log, many read-projections) solving an
+  AI-output-consistency problem; a compiler's single-IR/multiple-backend
+  design solving a "one truth, many renderings" problem; content-addressed
+  hashing (Merkle trees) proving two derived artifacts trace to the same
+  source; a statistical concept (sufficient statistics, coupling to prevent
+  independent-draw divergence) explaining WHY a design should hold together.
+  Mathematics — graph theory, information theory, statistics, optimization
+  — is worth checking routinely, not just AI/software precedent, because it
+  is frequently the actual source of a clean, provably-correct mechanism.
+- **Not limited to whatever domains/countries come to mind first.** Search
+  wider than the obvious — the closest-fitting mechanism may live in a
+  field or a country's engineering practice nobody thought to name at the
+  start. Combine 2-3 domains deliberately (an existing domain pattern as the
+  base with AI/tech as the addition, or the reverse) rather than defaulting
+  to "AI feature bolted onto the problem."
+- **Then it must clear a real gate before being trusted**, in this order:
+  simulate at your actual required scale (see above), run deliberate
+  adversarial tests that try to break the design's own stated guarantee
+  (`veos-wiring-and-ai-test`'s pattern: name the exact claim, construct the
+  one input built to break it, run it for real), and check at least one
+  real-life/production-shaped scenario. Trying several candidate designs or
+  parameterizations in simulation and keeping whichever survives is a
+  legitimate method here, not just single-shot invent-and-test.
+- **Label it invented, explicitly**, the same way a synthetic data row gets
+  tagged `is_synthetic` — never let an invented mechanism read as verified
+  industry precedent in a doc or a comment. State its known limitations
+  (including any scale ceiling found above) next to the decision, not
+  buried or omitted.
+
 **3. Encode the validated decision structurally, not conventionally.** A
 comment saying "always do X" gets ignored under deadline pressure. A
 required function parameter with no override, a database CHECK constraint,

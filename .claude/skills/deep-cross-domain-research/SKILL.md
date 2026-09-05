@@ -82,3 +82,28 @@ stronger grounding than either alone.
 5. **When reporting research to someone**, state explicitly which named
    items got real depth and which didn't, in the same message — don't
    wait to be asked three times.
+
+## When the search comes back empty — that's the invention trigger, not the end
+
+A real, thorough cross-domain pass sometimes finds nothing (a 103-agent,
+fully-verified pass on "how do organizations deliver one truth as many
+personalized deliveries without drift" came back with every single claim
+refuted or unrepresented — a genuine, confirmed gap, not a thin search).
+Per the standing project rule (`cross_domain_first_principles_invention`
+memory), a confirmed empty result is the trigger to INVENT a mechanism by
+combining domains, not a dead end to report and stop at:
+
+- The domain/country list in any research brief (§1 above) is a starting
+  point, never an allow-list. Search wider than what was named when the
+  first pass comes up empty — the closest-fitting real mechanism may sit in
+  a field or country nobody thought to name (mathematics — graph theory,
+  information theory, statistics, optimization — is worth checking on
+  every pass, not just when AI/tech precedent runs dry).
+- Combine 2-3 domains deliberately rather than settling for "no precedent
+  exists" as the final answer: an established pattern from one field as the
+  structural base with AI/tech as the addition on top, or the reverse.
+- Any resulting design is INVENTED, not precedent-backed — say so
+  explicitly when reporting it, and route it through `research-simulate-
+  encode`'s invention gate (simulate at actual required scale, adversarial
+  stress test, real-scenario check) before it's trusted, never presented as
+  verified industry practice.
