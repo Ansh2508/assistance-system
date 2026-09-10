@@ -229,6 +229,24 @@ green · `velth-review`'s tautological UUID property test · `test_confirmation_
 comparing two empty results and merging · `FakeContextRepository.list_rules` signature drift
 swallowed into `[]` · count-based gates in velth-test-strategy that reward a vacuous test.
 
+**Internal (veOS, 2026-09-10, a real instance of §1's "state, not story" rule found live in
+production):** a Google Drive ADC credential-loading check succeeded and was reported as "Drive
+access works" — a claim about a DIFFERENT, broader thing (a real, successful Drive API call)
+that had never actually been tested. The credential-loading check was correct for what it
+narrowly proved; the report built on top of it silently claimed more than that. Confirmed only
+when a founder directly challenged the claim ("did u test this before" — exactly §5's "what did
+I NOT do that could be read as done" question, asked from outside rather than caught from
+inside) and a real `service.files().get(...)` call was then run for the first time, revealing a
+genuine, separate GCE OAuth scope limitation the credential check had no way to see. **State
+exactly what a check proves, in the sentence that reports it — "the credential loaded" and "the
+real operation this credential is for also succeeds" are different claims, and the gap between
+them is invisible until someone names it.** Same session, same root failure mode a second time:
+production ran a stale container image for an entire session while every config-level check
+passed — "the value in `.env` is correct" and "the running process is using it" are also two
+different claims. See `veos-wiring-and-ai-test`'s own "structural verification vs. functional
+verification" section, and its five newly-documented 2026-09-10 incidents, for the fuller
+account and the mechanical fix (`infra/runtime/verify-deployed-image.sh`).
+
 ---
 
 ## Where this sits

@@ -226,6 +226,73 @@ approval design with the same seriousness as customer-facing VELTH work.
   is used for a dry run, always independently re-verify the resulting
   schema state on a fresh connection rather than trusting the harness's
   own report of what it did.
+- **A tool can be registered in ChiefOfStaff's real ADK tool array and still
+  be functionally isolated, because `CHIEF_OF_STAFF_INSTRUCTION` never
+  mentions it.** Verified 2026-09-06: `search_context_store`,
+  `list_meeting_consent_status`, and three new meeting-extraction tools
+  were all present in the tool list `adk_runtime.py`'s `LlmAgent`
+  construction builds (so `test_every_real_chief_of_staff_tool_has_an_
+  allowed_capability` correctly passed - the tool IS reachable), but the
+  model has no instruction to actually USE them together, cross-reference
+  prior evidence, or route an ambiguous finding through
+  `dispatch_to_specialist_agent(specialist="reality_convergence")`. This is
+  a DIFFERENT bug class from the "d23098a" registration gap this file
+  already tracks (missing Capability/ALLOWED_CAPABILITIES entry, caught by
+  the structural test above) - a tool can pass every registration/
+  reachability test and still be prompt-isolated. There is no automated
+  test for "is this tool actually documented in CHIEF_OF_STAFF_INSTRUCTION
+  with guidance on when to chain it with others" - check by grep for the
+  tool's own name inside the instruction string itself before assuming a
+  newly-added tool is genuinely usable as part of a multi-step turn, not
+  just technically callable in isolation.
+- **`git checkout -- <file>` during a mutation test reverts the ENTIRE
+  file to its last commit, not just the mutation.** Verified 2026-09-06
+  (second occurrence in this project - the first was `compose/compose.yml`
+  during Paperclip wiring, same session's own earlier work): appended a
+  one-line mutation marker to `adk_runtime.py` to prove a test would catch
+  it, then ran `git checkout -- src/veos_runtime/adk_runtime.py` to revert
+  it - this wiped ~200 lines of real, uncommitted, already-tested tool
+  code added earlier in the same turn, not just the marker line. Recovered
+  by re-applying the known-good content from conversation context and
+  re-running the full affected test suite (286 tests) to confirm full
+  recovery, but this is pure luck of having the content still in context -
+  it would not survive a compaction. **The actual fix: for a one-line/
+  small mutation on a file with other uncommitted changes, hand-edit the
+  mutation back out (undo the specific `Edit`), never `git checkout --`
+  the whole file** unless you have first confirmed via `git diff <file>`
+  that the ONLY uncommitted change to it is the mutation itself.
+- **`revenue.extraction.verify_spans`'s `span` argument indexes into the
+  SOURCE text passed as its first parameter, not into `field.value`.**
+  Verified 2026-09-06 while building `meeting_extraction.py`: an early
+  draft of `verify_extraction_grounded` set `ExtractedField(value=quote,
+  span=(0, len(quote)))` intending "does `quote` appear anywhere in
+  `transcript_text`" - this actually slices `transcript_text[0:len(quote)]`
+  (the FIRST N characters of the transcript, not a search), so a quote
+  appearing anywhere past the very start of the transcript would be wrongly
+  rejected. The correct call (matching `sales_intelligence/grounding.py`'s
+  own `_literal_span_check` precedent) is `span=(0, len(source_text))` -
+  the span must cover the WHOLE source being searched, with `value` as the
+  needle. Caught before any test ran by re-reading `verify_spans`'s real
+  implementation rather than assuming its shape from the parameter name
+  alone - a regression test now pins this
+  (`test_meeting_extraction.py::test_the_span_covers_the_whole_transcript_
+  not_the_quote_length`).
+- **A migration's own reviewed design for a "span reference" column can
+  explicitly forbid storing the verbatim quoted text** - check the
+  migration's comments before copying a similar-looking field's behavior
+  from elsewhere. `meeting_extraction_review.span_ref` (migration 0049) is
+  documented as "a reference to WHERE in the transcript the claim came
+  from, never the quoted text... an audit record that carries transcript
+  content is itself a second copy of the recording, outside the retention
+  clock" - a real, load-bearing retention-law requirement (the row must
+  legally outlive the transcript's own purge schedule). `sales_intelligence/
+  grounding.py`'s `RubricObservation.span_ref` DOES store the verbatim
+  quote via `SourceRef.excerpt` - a different table with no equivalent
+  retention clock forcing separation of words-vs-facts. Copying that
+  precedent for `meeting_extraction.py` without re-reading 0049's own
+  comment would have silently violated the newer, stricter design; fixed
+  to store a character-offset locator (`"142:187"`, or an honest fallback
+  string when only a whitespace/case-normalized match exists) instead.
 - **`hooks.veos.velth.io/health/`'s `runtime` field was hardcoded and had
   drifted a full sprint behind reality** — it read `"sprint4"` through the
   entire Sprint 5 build and initial deploy, because nothing bumps it
@@ -234,6 +301,79 @@ approval design with the same seriousness as customer-facing VELTH work.
   shipped code — when the next sprint lands, bump both hardcoded strings
   as part of the same PR, don't wait to notice post-deploy the way this
   session did.
+
+## KNOWN TRAPS (verified 2026-09-10) — the deploy-drift class, twice now
+
+- **A running container's image tag can be one commit behind the feature
+  you're debugging, and every config-level check will still pass.**
+  Production ran `e7a8c6c` - the commit immediately BEFORE dual-provider
+  Claude routing was added - for an entire session while every `.env`
+  value, `compose.yml` block, and IAM binding was genuinely correct. The
+  code that would have used them correctly simply hadn't been deployed.
+  **Run `infra/runtime/verify-deployed-image.sh <expected-tag>` after
+  every deploy** - it diffs every real running container's actual image
+  tag against expected, on veos-core-01, and fails loudly (exit 1, named
+  containers, missing vs. stale reported separately) on any mismatch.
+  Never trust `docker compose up -d`'s own "Recreated" output as proof.
+- **A `docker run --env-file .env <image> python -c "..."` test against a
+  freshly-built image is NOT the same claim as "the real running service
+  works."** If the real running container is on an older image, that test
+  can pass while production is still broken - the exact incident 7 trap
+  above. Test against the actual running container (`docker exec
+  <real-container-name> ...`), not a fresh one-off `docker run`, when the
+  claim is "this works in production right now."
+- **`config.py`'s own comment describing intended behavior is not
+  evidence the code does it.** `aws_access_key_id`/`aws_secret_access_key`
+  had a comment reading "explicit fields here rather than relying on the
+  ambient boto3/env credential chain" - correct, deliberate design,
+  written down - but `AnthropicBedrock()`'s real constructor call at all
+  3 real call sites never actually passed those fields, silently falling
+  through to the exact ambient chain the comment said it avoided. Every
+  compose service wires the `VEOS_`-prefixed env names; the ambient AWS
+  SDK chain reads the bare, unprefixed names - read the actual call site
+  before trusting a comment's claim about it, every time.
+- **`VEOS_MODEL_PROVIDER` reverted to `gemini` in production `.env` at
+  some point after being explicitly set to `claude`.** `write_preserved`
+  in `sync-env-from-secret-manager.sh` keeps whatever value already
+  exists in `.env` over its own new default - correct behavior for most
+  flags, but means a real regression in this one specific value can
+  survive silently across many sync-script re-runs. If Claude routing
+  stops working with no other explanation, check this value first:
+  `sudo grep MODEL_PROVIDER /opt/veos/compose/.env` on veos-core-01.
+- **A new tool must be registered in TWO independent places, not one.**
+  `CHIEF_OF_STAFF_INSTRUCTION` (model discoverability, enforced by
+  `test_chief_of_staff_instruction_completeness.py`) and
+  `schemas.ALLOWED_CAPABILITIES` (runtime permission, enforced by
+  `test_adk_runtime.py::test_every_real_chief_of_staff_tool_has_an_
+  allowed_capability`) are separate surfaces - a tool wired into
+  `AdkGenerationClient.generate`'s real tool array but missing from
+  `ALLOWED_CAPABILITIES` is silently blocked by `before_tool_callback` at
+  runtime, with no error surfaced anywhere the model or founder can see.
+- **A dedup/uniqueness fix that looks locally correct can break a
+  different, real guarantee elsewhere - run the FULL test suite before
+  committing, not just the tests you believe are related.**
+  `create_candidate`'s pre-check filtered by `artifact_id`; the real
+  Postgres constraint was on `(source_hash, proposed_entity_id,
+  proposed_content)` - different columns. Switching the pre-check to
+  match the constraint fixed a real re-ingestion crash but broke
+  `test_identical_bytes_from_independent_sources_keep_both_provenance_
+  lanes` - a real, deliberate guarantee that identical content from two
+  INDEPENDENT sources must each get their own candidate (corroboration,
+  not dedup). The correct fix keeps the original pre-check and adds a
+  caught-exception recovery path for the specific constraint violation -
+  additive, never a silent change to existing dedup semantics.
+- **"A credential/mechanism loaded successfully" and "the real operation
+  it's for also succeeds" are two different claims requiring two
+  different tests.** Google Drive ADC credential LOADING succeeded and
+  was reported as "Drive access works" - the real Drive API call it was
+  for then failed on a genuine, separate GCE OAuth scope limitation the
+  credential-loading check had no way to see. Name exactly what a check
+  proves in the same sentence you report it; never let a narrow,
+  correct verification get silently reported as evidence for a broader
+  claim it doesn't cover. See `veos-wiring-and-ai-test`'s own
+  "structural verification vs. functional verification" section for the
+  named industry anti-patterns this maps to (configuration drift,
+  "The Liar," "Structural Inspection").
 
 ## SKILL TRIAGE — VELTH-wide skills that apply here unchanged
 `velth-graph-engineering`, `velth-spec`, `velth-loop`, `velth-context`,
