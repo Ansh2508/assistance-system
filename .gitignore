@@ -7,6 +7,9 @@
 !.claude/
 .claude/*
 !.claude/skills/
+!.codex-portable/
+.codex-portable/*
+!.codex-portable/README.md
 
 # --- NEVER TRACK: secrets and private session data ---
 # These are re-stated after the allow-list so they always win.
