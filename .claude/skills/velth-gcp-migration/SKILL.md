@@ -1,7 +1,10 @@
 ---
 name: velth-gcp-migration
 description: The per-domain loop for VELTH's Supabase-to-Cloud-SQL repository-layer migration (Path B). Encodes the recipe from docs/REPOSITORY_LAYER_MIGRATION.md + PART2 HARDENED with researched best practices (strangler-fig / branch-by-abstraction, asyncpg+pgbouncer footguns, Alembic autogen blind spots, testcontainers parity) AND real land-time lessons (guardrail-drop-on-merge, cross-domain raw-SQL drift, docker false-green skip, slug truncation, prod-env upgrade trap). Steps 0-7 build one domain; STEP 8 lands it. WHICH DOMAINS REMAIN IS NOT STATED HERE AND MUST NOT BE INFERRED FROM THIS FILE — see the STATUS WARNING at the top of the body. Load at the start of any migration domain alongside velth-preflight, velth-spec, velth-loop, velth-test-strategy, velth-review, velth-commit-prep. Maker != checker; Cowork never runs git; Anshu commits.
-trigger: auto
+when_to_use: >
+  Before touching any Supabase-backed domain that's part of the Cloud-SQL
+  migration — check the STATUS WARNING for real current progress first,
+  never trust this file's own progress claims without re-verifying.
 ---
 
 # VELTH GCP Migration Skill (repository layer, Path B)

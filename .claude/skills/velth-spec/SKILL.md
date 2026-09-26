@@ -1,7 +1,9 @@
 ---
 name: velth-spec
 description: The planning front-end for every non-trivial VELTH task - turn an idea into an approved, testable plan before any code is written. Explore (read-only, with a mandatory ponytail why-does-this-behave-this-way check for existing logic) -> Plan -> confirm -> TDD-first -> implement. This is where Anshu spends his attention as architect; it is the single biggest lever on output quality and the biggest reducer of his cognitive load. Load with velth-loop at the start of an implementation session.
-trigger: auto
+when_to_use: >
+  Before writing any code for a non-trivial VELTH task — Anshu confirms the
+  plan in chat before implementation starts, not after.
 ---
 
 # VELTH Spec Skill (plan before code)

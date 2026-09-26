@@ -1,7 +1,11 @@
 ---
 name: velth-preflight
 description: VELTH project preflight checks, absolute rules, git hygiene, environment constants, and the skills map (which of the other ~20 VELTH skills to load for which kind of task). Load this FIRST, at the start of every session (Claude Code or Codex), not only tasks touching document_renderers.py.
-trigger: bash command + auto
+when_to_use: >
+  Immediately whenever the working directory is a VELTH checkout (velth,
+  velth-clean, or any velth-* worktree) — before making any edit, running
+  any command, or answering an architecture question, not only when a task
+  explicitly names document_renderers.py or another specific file.
 ---
 
 # VELTH Preflight Skill

@@ -1,7 +1,10 @@
 ---
 name: velth-commit-prep
 description: After the loop is green, emit an explicit copy-paste git add + commit + push block IN CHAT for Anshu to run. Cowork never runs git - Anshu commits. Load at the end of an implementation session once velth-loop verification passes. Uses explicit file paths (never git add -A) to preserve the untracked scratch/venv pile.
-trigger: auto
+when_to_use: >
+  Right before saying a VELTH task is "done" or "ready to commit" — never
+  run git add/commit/push directly unless Anshu has explicitly asked in
+  the current conversation to do so himself.
 ---
 
 # VELTH Commit-Prep Skill

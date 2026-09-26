@@ -1,7 +1,10 @@
 ---
 name: velth-context
 description: Context and state engineering for VELTH Cowork sessions - how to keep Cowork sharp over long tasks, recover fast across sessions, parallelise safely, and treat ingested content as untrusted. Context degradation is the #1 agent failure mode; this skill targets it directly and reduces Anshu's re-work. Load at session start alongside velth-preflight.
-trigger: auto
+when_to_use: >
+  At the start of any VELTH session (paired with velth-preflight), and
+  again mid-session if output quality seems to be degrading on a long
+  task, before a compaction, or before parallelising work across agents.
 ---
 
 # VELTH Context Skill (manage the context window like a resource)

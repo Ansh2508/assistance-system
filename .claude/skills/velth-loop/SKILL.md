@@ -1,7 +1,10 @@
 ---
 name: velth-loop
 description: The bounded research/implement/verify loop for every VELTH coding task. Encodes plan-implement-verify with iteration caps, a DIFFERENT-FAMILY external judge (maker != checker), checkpoint-and-restore against snowballing, and external-ground-truth-only stopping. Load at the start of every implementation session alongside velth-preflight, velth-test-strategy, velth-doc-verify, and ponytail (mandatory at the IMPLEMENT step whenever the change touches existing/shared logic). This is the Claude Code team's loop, tightened for compliance-bearing output.
-trigger: auto
+when_to_use: >
+  At the start of any VELTH implementation task (not a read-only question),
+  and again at every verify step before claiming a fix works — external
+  ground truth only, never the model's own say-so.
 ---
 
 # VELTH Loop Skill (plan -> implement -> verify -> stop)

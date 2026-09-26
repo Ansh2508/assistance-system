@@ -10,7 +10,13 @@ description: >
   project from the working directory and hands off to that project's own
   preflight skill if one exists; otherwise routes by task category using
   the general-purpose skills below.
-trigger: bash command + auto
+when_to_use: >
+  At the very start of any session, before any other skill loads, in any
+  working directory. Also mid-session if unsure which of the ~70 skills in
+  ~/.claude/skills applies to the current task, or if a request looks
+  novel/ambiguous and no other skill's description matches confidently.
+  Do NOT wait for the user to name a skill by hand — check this file's
+  Step 1/Step 2 tables first.
 ---
 
 # skill-map — the router above the per-project routers

@@ -1,7 +1,10 @@
 ---
 name: velth-doc-verify
 description: Automated L5 - verify correctness of generated VELTH documents (all 6 doc types, any vertical) without opening a PDF by hand. Deterministic defect checks plus an adversarial DIFFERENT-FAMILY LLM judge plus a localhost/UI propagation smoke. Load whenever a task touches a renderer, extractor, the export route, the gate, or any vertical's output. Scope each run to the doc types and verticals of the current session.
-trigger: auto
+when_to_use: >
+  Before reporting any change to document_renderers.py, an extractor, the
+  export route, or a vertical config as done — runs after velth-test-
+  strategy's L1-L4, never as a replacement for them.
 ---
 
 # VELTH Document Correctness Skill (automated L5)

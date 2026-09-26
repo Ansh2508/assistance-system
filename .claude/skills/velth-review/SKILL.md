@@ -1,7 +1,10 @@
 ---
 name: velth-review
 description: Code-level security and correctness review that runs inside velth-loop's verify/simplify step - the rung that catches what doc-verify (output correctness) does not. Security review (secrets, PII/GDPR, RLS, injection), property-based invariants for the P0 defect classes, a mandatory ponytail-driven behavior-change check for any diff touching existing control flow, and a staff-engineer self-review bar. Load for any task touching backend code, the export route, auth, or data ingestion.
-trigger: auto
+when_to_use: >
+  Inside velth-loop's verify step, for any backend/auth/export/ingestion
+  diff — always alongside a ponytail behavior-change check when the diff
+  touches existing control flow, not just new code.
 ---
 
 # VELTH Review Skill (security + correctness, code level)

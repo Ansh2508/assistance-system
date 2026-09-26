@@ -1,7 +1,9 @@
 ---
 name: velth-test-strategy
 description: VELTH mandatory testing strategy for every backend task. Load before writing any test, before any git commit, before any Cowork implementation prompt. Contains all learnings from May 2026 sprint. Universal — applies to every feature, fix, and refactor, not just specific bugs.
-trigger: auto
+when_to_use: >
+  Before writing any backend test and before any commit — applies even to
+  a small fix or refactor, not only tasks that look test-heavy.
 ---
 
 # VELTH Test Strategy — Permanent Rules
