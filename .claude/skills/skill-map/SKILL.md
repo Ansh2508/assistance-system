@@ -2,12 +2,15 @@
 name: skill-map
 description: >
   Project-agnostic skill router across all of Anshu's repos and general
-  work, not just one codebase. Load at the start of any session where no
-  project-specific preflight skill has fired yet, or when it's unclear
-  which of the ~40 skills in ~/.claude/skills applies. Detects the current
+  work, not just one codebase. Load at the start of EVERY session,
+  automatically, without waiting to be named or for a project-specific
+  preflight to fire first — this is the top-level entry point above
+  velth-preflight/veos-preflight/sde-preflight, and Anshu does not want to
+  name skills repeatedly, so this must self-trigger. Detects the current
   project from the working directory and hands off to that project's own
   preflight skill if one exists; otherwise routes by task category using
   the general-purpose skills below.
+trigger: bash command + auto
 ---
 
 # skill-map — the router above the per-project routers
