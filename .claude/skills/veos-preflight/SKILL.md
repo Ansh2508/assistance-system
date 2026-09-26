@@ -9,6 +9,15 @@ veOS is VELTH's internal agentic operating system, deployed on GCP and in
 active use by the whole team — not a personal tool. Treat its data and
 approval design with the same seriousness as customer-facing VELTH work.
 
+**Hard dependency:** also load `veos-wiring-and-ai-test` before claiming any
+veOS config change, deploy, or AI-behavior fix is "done," or before
+reporting a feature flag as "wired." That skill's incidents (configuration
+drift, a health check that structurally can't distinguish real success from
+a fallback, single-instance tests of distributed mechanisms) are the
+functional-verification companion to this file's structural known-traps
+list — the two are not redundant, load both. See `veos-graphify` too if the
+task needs to trace a multi-hop call path across `src/veos_runtime/`.
+
 ## ENVIRONMENT CONSTANTS
 - Repo: velthdev/veos, standalone, never merged into velthdev/velth.
 - GCP project: veth-veos-dev. VERIFY `gcloud config get-value project`

@@ -197,6 +197,23 @@ Every skill lives at `/mnt/skills/user/<name>/SKILL.md`. **Load and read the
 file — a one-line description is a pointer, not a substitute for the content.**
 Most non-trivial VELTH backend tasks load 4-6 of these together, not one.
 
+**Hard dependencies — scan this table even mid-task, not just at session
+start.** No frontmatter field auto-cascades a load (confirmed: `trigger:` is
+not a real field, see git history for that correction) — these pairs only
+hold because this table says so and gets followed. If you loaded the skill
+in the left column, load the right column too, at the point stated:
+
+| If you loaded... | Also load... | When |
+|---|---|---|
+| `velth-spec` | `velth-loop` | Same session, once EXPLORE/PLAN is confirmed and IMPLEMENT starts |
+| `velth-loop` | `ponytail` | At the IMPLEMENT step, whenever the diff touches EXISTING or SHARED logic (not brand-new code) |
+| `velth-loop` | `velth-test-strategy` + `velth-doc-verify` | At the VERIFY step, for any backend/document-output change |
+| `velth-review` | `ponytail` | Whenever the diff touches existing control flow, not just new code |
+| `velth-gcp-migration` | `velth-preflight`, `velth-spec`, `velth-loop`, `velth-test-strategy`, `velth-review`, `velth-commit-prep` | At the start of any migration domain — this one skill implies all six |
+| Any implementation task reaching "done" | `velth-commit-prep` | Before emitting any commit block, never run git directly unless explicitly asked |
+| `velth-e2e-live-verify` | `velth-prod-verify` | Together — one covers auth/UI proof, the other covers deploy-status proof, neither substitutes for the other |
+| Any deploy-status claim | `velth-prod-verify` | Before saying "deployed"/"live"/"not deployed" — every time, not just the first time this session |
+
 **Always, every session:**
 - `velth-preflight` (this file) — environment constants, absolute rules, git
   hygiene. Load first.
