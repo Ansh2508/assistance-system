@@ -315,3 +315,44 @@ Most non-trivial VELTH backend tasks load 4-6 of these together, not one.
 **Generic utility:**
 - `prompt-master` — only when explicitly asked to write, fix, or adapt a
   prompt for a different AI tool. Not for VELTH engineering work.
+
+**Generic lifecycle skills (`addyosmani/agent-skills`, MIT, added 2026-09-26)
+— not installed as active skills, referenced here so a session can pull one
+by name when it fills a real gap.** These are non-VELTH-specific,
+software-lifecycle-stage skills. Most stages already have a stronger,
+VELTH-specific equivalent below — load the VELTH one first. Only reach for
+the generic repo for the handful that have no VELTH-specific counterpart
+(marked ⭐), or when the VELTH skill explicitly hands off to a broader check
+it doesn't itself cover.
+
+| Generic skill | Covers | VELTH equivalent already in this library |
+|---|---|---|
+| `spec-driven-development` | PRDs, objectives/scope before code | `velth-spec` (has the mandatory ponytail why-does-this-behave-this-way check VELTH added; prefer it) |
+| `test-driven-development` | red-green-refactor, test pyramid | `velth-test-strategy` (encodes May 2026 sprint's real incidents; prefer it) |
+| `code-review-and-quality` | multi-axis review, severity labeling | `velth-review` (secrets/PII/GDPR/RLS/injection specific to this codebase; prefer it) |
+| `code-simplification` | reduce complexity, preserve behavior | `ponytail` + `ponytail-review` (this project's own minimalism lens, plus the preservation rule generic simplification doesn't have) |
+| `planning-and-task-breakdown` | decompose spec into testable units | `velth-graph-engineering` (node taxonomy, forbidden edges — a stricter, multi-actor-aware version) |
+| `incremental-implementation` | thin vertical slices, feature flags | `velth-loop` (checkpoint→implement→verify→loop, capped iterations) |
+| `git-workflow-and-versioning` | atomic commits, branch hygiene | `velth-commit-prep` + this file's own GIT HYGIENE section (VELTH's specific never-commit-without-being-asked rule overrides anything generic here) |
+| `ci-cd-and-automation` | pipeline setup, quality gates | N/A directly, but see `velth-prod-verify`/`veos-wiring-and-ai-test` for THIS project's actual broken-CI reality — don't apply generic CI advice before reading those |
+| `security-and-hardening` | OWASP Top 10, auth, secrets | `velth-review` (same scope, VELTH-specific: RLS, tenant boundaries, GDPR) |
+| `performance-optimization` | Core Web Vitals, profiling | ⭐ no VELTH-specific equivalent yet — genuinely useful as-is for a frontend perf task (the robots.txt/LCP work this session touched had no dedicated skill) |
+| `observability-and-instrumentation` | logging, metrics, tracing | ⭐ no VELTH-specific equivalent — `veos-wiring-and-ai-test`'s "structural vs functional verification" section is the closest adjacent idea but isn't about instrumentation design itself |
+| `deprecation-and-migration` | removing old systems, DB migration | `velth-gcp-migration` (VELTH's specific Supabase→Cloud-SQL loop; prefer it for that migration specifically, generic one for anything else) |
+| `documentation-and-adrs` | ADRs, API doc, design-choice records | N/A directly — VELTH doesn't have a dedicated ADR-writing skill; the generic one is fine to use as-is (see `docs/adr/ADR-014-*` already in the repo for the existing convention to match) |
+| `shipping-and-launch` | pre-launch checklist, staged rollout | `velth-prod-verify` (VELTH's actual deploy-status verification discipline; prefer it — the generic checklist doesn't know this project's broken-CI trap) |
+| `source-driven-development` | ground decisions in official docs | `research-simulate-encode` / `research-to-code` (VELTH's stricter version: requires simulation + adversarial test, not just a citation) |
+| `api-and-interface-design` | REST/GraphQL contracts, module boundaries | N/A directly — genuinely useful as-is for `apps/backend/api/routes/` boundary work; `velth-preflight`'s own Architecture Boundaries section (api/routes = transport only) is the project-specific constraint to layer on top |
+| `frontend-ui-engineering` | components, a11y, responsive layout | `impeccable` (this environment's own frontend design/UX audit skill; prefer it) |
+| `browser-testing-with-devtools` | Chrome DevTools MCP inspection | ⭐ no VELTH-specific equivalent — `velth-e2e-live-verify` covers authenticated Playwright + screenshot inspection but not live DevTools console/network debugging; genuinely complementary, not redundant |
+| `debugging-and-error-recovery` | reproduce→localize→reduce→fix→guard | ⭐ closest is `veos-wiring-and-ai-test`'s incident-driven checklist, but that's veOS-specific traps, not a general debugging method — the generic one is worth loading for a VELTH bug with no known-trap match |
+| `context-engineering` | session/context setup, rules files | `velth-context` (VELTH-specific: SCHEMA.md/NEXT_TASK.md convention, untrusted-content handling; prefer it) |
+| `constraint-driven-development` | writes a quality bar down, stops it eroding | ⭐ no VELTH-specific equivalent — CLAUDE.md's "Coding Rules" section is the closest existing artifact but isn't a skill that actively interviews/enforces; worth trying this one if quality-bar drift becomes a recurring problem |
+| `doubt-driven-development` | adversarial fresh-context review of a plan | ⭐ no VELTH-specific equivalent — closest is `audit-like-a-sifa`'s five-question method, but that's Anshu's own manual review lens, not a skill Claude applies to its own plan before presenting it; genuinely worth using for a high-stakes decision before it's proposed |
+| `idea-refine` / `interview-me` | sharpen a vague idea via structured questioning | ⭐ no VELTH-specific equivalent — useful when a request is genuinely underspecified and `AskUserQuestion` alone isn't enough structure |
+| `using-agent-skills` | meta-skill: how to discover/pick a skill | Superseded here by this file (`velth-preflight`) acting as the project's own skill router — don't load the generic meta-skill, it doesn't know this project's skill set |
+
+Not cloned into `~/.claude/skills/` as active skills — pull one by name via
+the Skill tool only when the ⭐ gap genuinely applies, or the task explicitly
+asks for the generic version. Installing all 24 alongside VELTH's own would
+create two competing routers; this table is the router instead.
