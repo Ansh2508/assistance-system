@@ -16,8 +16,15 @@ and-replace across every file; just don't take it literally, and prefer
 "Claude Code"/"Codex" (or no product name at all) in anything new you write.
 
 ## ENVIRONMENT CONSTANTS
-- Repo root: `C:\Users\redmi\velth`
-- Backend root: `C:\Users\redmi\velth\apps\backend`
+- Two checkouts exist: `C:\Users\redmi\velth` and `C:\Users\redmi\velth-clean`.
+  `velth-clean` was created 2026-09-24 as a fresh, `git fsck --full`-verified
+  clone after the original `velth` checkout hit real git object-store
+  corruption (ref-level repaired at the time; deeper working-tree/index
+  corruption not fully resolved in that session). Which one is actually the
+  live working directory can change session to session — run `git status`
+  and `git fsck` in whichever one you're about to use before trusting it,
+  rather than assuming either is current from this note alone.
+- Backend root: `apps/backend` under whichever repo root is confirmed live.
 - Primary file: `apps/backend/core/projects/document_renderers.py`
 - Ruff config: `apps/backend/pyproject.toml`
 - Python: 3.12 (Windows)
