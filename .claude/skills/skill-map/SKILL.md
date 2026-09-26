@@ -157,6 +157,37 @@ one by name instead of waiting for auto-trigger:
   equivalent for this project's real stack, rather than trusting a frozen
   summary that goes stale the moment the source logs a new incident.
 
+## Step 3 — genuinely in doubt: skill-map → web search → ask, in that order
+
+For a request that's ambiguous or novel enough that nothing in Step 1 or
+Step 2 matches well, don't guess and don't ask the user to name a skill
+themselves — work this fallback chain first, in order:
+
+1. **Re-check this file's own tables carefully** before concluding nothing
+   fits — a task can match a category here in a non-obvious way (e.g. "make
+   this feel less AI-generated" is `frontend-ui-engineering` or
+   `impeccable`, not an unmapped request). Re-reading Step 1/Step 2 slowly
+   solves most apparent mismatches.
+2. **Web search** for whether a real, existing skill/tool/pattern already
+   covers this need, the same way `graphify`, `ponytail`, and the 24
+   `agent-skills` skills were each found and vetted before adoption in this
+   environment (see each one's own installation history for the research
+   standard to match — check license, real maintenance activity, and any
+   known security issues before treating a search result as safe to use,
+   the same way OmniRoute was researched, found to have real CVEs, and
+   declined rather than installed).
+3. **Only then, ask** — with a concrete, narrowed question (what was found
+   in step 2, what's still unclear), not a bare "which skill should I use?"
+   Per Anshu's own explicit instruction: he does not want to be asked to
+   name a skill himself; the question at this point should be about a
+   genuine decision only he can make (adopt a newly-found tool with a
+   tradeoff, confirm a project-specific detail no skill or search can
+   supply), not a request for him to do the routing this skill exists to do.
+
+This order exists because most "in doubt" moments resolve at step 1 or 2
+without ever needing to interrupt Anshu — reserve the ask for when research
+genuinely can't close the gap.
+
 ## When a new project earns its own `<project>-preflight` skill
 
 Per this environment's own established pattern (`velth-preflight`,
