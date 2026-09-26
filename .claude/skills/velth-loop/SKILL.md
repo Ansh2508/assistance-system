@@ -1,6 +1,6 @@
 ---
 name: velth-loop
-description: The bounded research/implement/verify loop for every VELTH coding task in Cowork. Encodes plan-implement-verify with iteration caps, a DIFFERENT-FAMILY external judge (maker != checker), checkpoint-and-restore against snowballing, and external-ground-truth-only stopping. Load at the start of every implementation session alongside velth-preflight, velth-test-strategy, and velth-doc-verify. This is the Claude Code team's loop, tightened for compliance-bearing output.
+description: The bounded research/implement/verify loop for every VELTH coding task. Encodes plan-implement-verify with iteration caps, a DIFFERENT-FAMILY external judge (maker != checker), checkpoint-and-restore against snowballing, and external-ground-truth-only stopping. Load at the start of every implementation session alongside velth-preflight, velth-test-strategy, velth-doc-verify, and ponytail (mandatory at the IMPLEMENT step whenever the change touches existing/shared logic). This is the Claude Code team's loop, tightened for compliance-bearing output.
 trigger: auto
 ---
 
@@ -29,6 +29,20 @@ the localhost smoke. "Done" means those are green - never Cowork's own say-so.
                        reverted instead of compounded - guards "snowballing"
                        (arXiv 2604.06066).
 2. IMPLEMENT           Surgical edits only (velth-preflight). One coherent change.
+                       MANDATORY when the edit touches EXISTING/SHARED logic (not new
+                       code): load ponytail and run its preservation-rule inventory
+                       BEFORE writing the diff - what does the current behavior protect
+                       (a documented design decision, an edge case, a failure-mode
+                       choice), and does the new behavior keep an equivalent contract?
+                       Real incident this is written to prevent, 2026-09-22: a fix for
+                       one bug (a swallowed ledger-sync error) was implemented by making
+                       the caller fail-closed, silently inverting a DIFFERENT, already-
+                       documented, deliberate decision in the same function (warn-and-
+                       continue, commit e3fd34086) - a real production regression that
+                       shipped, that a one-line "why does this function behave this way"
+                       check against git blame/commit history would have caught before
+                       the diff was ever written. Skipping this step is not a shortcut,
+                       it is exactly how that regression happened.
 3. VERIFY (external)   In order:
                          a. uvx ruff format + check (changed files)
                          b. uv run --no-sync python scripts/pre_commit_gate.py  (L1-L4)

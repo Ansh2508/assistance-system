@@ -1,6 +1,6 @@
 ---
 name: velth-spec
-description: The planning front-end for every non-trivial VELTH task - turn an idea into an approved, testable plan before Cowork writes any code. Explore (read-only) -> Plan -> confirm -> TDD-first -> implement. This is where Anshu spends his attention as architect; it is the single biggest lever on output quality and the biggest reducer of his cognitive load. Load with velth-loop at the start of an implementation session.
+description: The planning front-end for every non-trivial VELTH task - turn an idea into an approved, testable plan before any code is written. Explore (read-only, with a mandatory ponytail why-does-this-behave-this-way check for existing logic) -> Plan -> confirm -> TDD-first -> implement. This is where Anshu spends his attention as architect; it is the single biggest lever on output quality and the biggest reducer of his cognitive load. Load with velth-loop at the start of an implementation session.
 trigger: auto
 ---
 
@@ -19,10 +19,21 @@ So: plan explicitly, define the test that proves success, then implement.
 ## THE FRONT OF THE LOOP (Anshu approves before any edit)
 
 ```
-EXPLORE (read-only)   Cowork reads the relevant files and summarises them. NO edits.
-                      Ask it the questions you'd ask a senior engineer ("what does
+EXPLORE (read-only)   Read the relevant files and summarise them. NO edits.
+                      Ask the questions a senior engineer would ("what does
                       X handle? where is Y wired?"). Use neutral language ("correct
                       me if I'm wrong, the flow is...") to reduce model bias.
+                      MANDATORY when the plan will touch EXISTING/SHARED logic:
+                      load ponytail here, not later - check git blame/log on the
+                      function being changed for a commit message that explains
+                      WHY it behaves the way it does, before proposing how to
+                      change it. Real incident, 2026-09-22: a plan to fix a
+                      swallowed-error bug did not surface that the surrounding
+                      function's failure-handling was itself a separate, already-
+                      documented deliberate decision (commit e3fd34086) - the plan
+                      looked complete and reasonable, and it still produced a
+                      production regression, because the EXPLORE step asked "what
+                      does this do" but not "why does it fail this specific way."
 PLAN                  Numbered plan: each change as <file> + <why> + the EXACT verify
                       command that will prove it. Surface assumptions and open
                       questions. No code in this phase.

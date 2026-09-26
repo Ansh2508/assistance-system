@@ -1,10 +1,19 @@
 ---
 name: velth-preflight
-description: VELTH project preflight checks, absolute rules, git hygiene, environment constants, and the skills map (which of the other ~20 VELTH skills to load for which kind of task). Load this FIRST, at the start of every Cowork session, not only tasks touching document_renderers.py.
+description: VELTH project preflight checks, absolute rules, git hygiene, environment constants, and the skills map (which of the other ~20 VELTH skills to load for which kind of task). Load this FIRST, at the start of every session (Claude Code or Codex), not only tasks touching document_renderers.py.
 trigger: bash command + auto
 ---
 
 # VELTH Preflight Skill
+
+## TERMINOLOGY NOTE
+
+Older skill text in this library says "Cowork" to mean the AI doing this work.
+That name is outdated — the actual tools in use are **Claude Code** and
+**Codex**. Read "Cowork" wherever it appears as a stand-in for whichever of
+those is running the session, not a distinct product. Not worth a mass find-
+and-replace across every file; just don't take it literally, and prefer
+"Claude Code"/"Codex" (or no product name at all) in anything new you write.
 
 ## ENVIRONMENT CONSTANTS
 - Repo root: `C:\Users\redmi\velth`
@@ -122,6 +131,32 @@ git diff --cached --name-only
 git push origin {branch}
 ```
 
+**BEFORE writing a fix for anything that smells like a known, describable gap
+(a missing meta tag, a missing robots.txt entry, a duplicate schema block, a
+sitemap omission) — check whether it's already fixed on `main` first.** Real
+incident, 2026-09-24: a full night was spent building, testing, and committing
+16 files of VELTH Phase-0 SEO site fixes (audience-page metadata, FAQ
+server-rendering, duplicate SoftwareApplication schema, sitemap gaps,
+robots.txt crawler entries) that turned out to have ALREADY been merged to
+`main` the day before, independently. Zero of it was needed; all of it was
+confirmed live in production before the session even started. The tell was
+there the whole time — `git status` in the working checkout showed 71+
+files of pre-existing uncommitted, unrelated work, which should have been
+the first signal to `git fetch origin && git log --oneline origin/main -5
+--` and diff the SPECIFIC files about to be "fixed" against current `main`
+before writing a single line. A live URL check (`curl -s https://www.velth.io
+/faq | grep "<the exact text the fix would add>"`) is even cheaper and would
+have caught it in one command. **Do this check before starting the work, not
+after — a diff against stale `main` is not evidence a gap is real.**
+
+**Two production readers other than the human matter here too: search
+crawlers and AI answer engines.** Site metadata/schema/robots.txt fixes are
+exactly the kind of gap that looks locally verifiable (build passes, page
+renders) while being invisible without checking the ACTUAL served HTML/
+robots.txt against production — `curl` the real URL, don't trust the local
+dev server alone, since a fix can be right in the working tree and already
+redundant on the server at the same time.
+
 **`--no-verify` removed 2026-08-26** — see `velth-commit-prep`'s note. It was
 silently bypassing `.husky/pre-push` (lint:backend, lint:frontend,
 type-check, plus a conditional pip-audit and vertical-YAML validation), which
@@ -170,8 +205,21 @@ Most non-trivial VELTH backend tasks load 4-6 of these together, not one.
   No code before Anshu approves the plan in chat.
 - `velth-loop` — the bounded loop once inside IMPLEMENT: checkpoint → implement
   → verify (external ground truth only — pytest/ruff/`pre_commit_gate.py`/
-  doc-verify, never Cowork's own say-so) → loop (cap 3 rounds) → simplify →
+  doc-verify, never the model's own say-so) → loop (cap 3 rounds) → simplify →
   report in chat.
+- `ponytail` — MANDATORY, not optional, whenever a change touches EXISTING or
+  SHARED logic (not new code): before writing the diff, inventory what the
+  current behavior protects (a documented design decision, an edge case, a
+  deliberate failure-mode choice) and confirm an equivalent contract survives.
+  Wired into `velth-spec`'s EXPLORE step, `velth-loop`'s IMPLEMENT step, and
+  `velth-review`'s behavior-change check — load it at all three, not once.
+  Real incident, 2026-09-22: a fix for a swallowed-error bug silently inverted
+  a different, already-documented deliberate decision in the same function
+  (warn-and-continue on a ledger-sync failure, commit `e3fd34086`) and shipped
+  a real production regression that a one-line "why does this behave this way"
+  check would have caught. See `velth-prod-verify` for how that regression's
+  deploy status was then ALSO mis-reported — two separate failures in one
+  incident, now two separate mandatory skills.
 - `velth-graph-engineering` — load BEFORE decomposing any multi-actor task or
   any irreversible action (git write, migration apply, deploy, delete, shared-
   table write). Node taxonomy, forbidden edges, the checkpoint-width law. Load
@@ -191,6 +239,31 @@ Most non-trivial VELTH backend tasks load 4-6 of these together, not one.
   confident-false-success), because it explains why he asks narrow, specific
   verification questions rather than "review this thoroughly" — per its own
   research, longer review prompts make an AI reviewer WORSE, not better.
+
+**Deploy / production-status claims:**
+- `velth-prod-verify` — MANDATORY before any claim that a fix "did/didn't
+  reach production," "is/isn't live," or "was/wasn't deployed." A deploy-
+  status check is a snapshot, not a fact — it expires the instant another
+  build could have run. Confirm the real GCP project first (never trust
+  `gcloud config get-value project`'s ambient default — this project has
+  multiple similarly-named decoys), check the LIVE Cloud Run revision's
+  actual built commit by git ancestry, and re-check immediately before
+  sending a report, not from memory of an earlier check in the same
+  conversation. Written after a real false "not deployed" report on
+  2026-09-22 that the user had to catch and correct twice.
+- `velth-e2e-live-verify` — load whenever a fix touches login-gated behavior,
+  or whenever a visual/layout claim needs an actual look rather than an
+  assertion about it. Covers TWO things: (1) an authenticated click-through,
+  via Zitadel's own documented Session-API + `x-zitadel-login-client` flow to
+  log in a real, pre-created test account without scripting the browser
+  through the hosted login page (which repeatedly failed this project when
+  attempted directly) — then Playwright's `storageState` so the login only
+  happens once, not per test run; and (2) real live UI/UX inspection —
+  screenshot production at desktop+mobile viewports with a throwaway spec
+  file, then actually `Read` the PNG and look, cleaning up the scratch file
+  after. Part 1 requires a standing test account to already exist; does not
+  create one itself. Written 2026-09-22 after several real failed attempts to
+  get production login access mid-session.
 
 **Environment-specific:**
 - `velth-cowork-sandbox-safety` — load BEFORE any task involving git writes,

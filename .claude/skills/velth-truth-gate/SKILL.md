@@ -229,6 +229,19 @@ green · `velth-review`'s tautological UUID property test · `test_confirmation_
 comparing two empty results and merging · `FakeContextRepository.list_rules` signature drift
 swallowed into `[]` · count-based gates in velth-test-strategy that reward a vacuous test.
 
+**Internal (VELTH, 2026-09-22, a deploy-status claim went stale between check and report):**
+a regression fix's Cloud Build check found the last successful build predated the regression —
+true, EXECUTED, at that moment. The report ("not deployed") was made anyway, without re-checking
+immediately before sending it. A separate PR merged and deployed in the interim; the live
+revision now included the regression. The user caught it only by refusing to accept the claim
+twice ("was it deployed", "are usure", then relaying a direct contradiction from a teammate).
+Compounding error found in the same session: the check itself first ran against the wrong GCP
+project (`gcloud config get-value project`'s ambient default, a different unrelated product) for
+several turns before the real production project was confirmed — see `velth-prod-verify` for the
+full mechanical procedure this incident produced. **Generalizes §1's table above: "not deployed"
+is not evidence, "not deployed, checked at command timestamp T" is — and it expires at T, not at
+report time if any deploy could have happened between the two.**
+
 **Internal (veOS, 2026-09-10, a real instance of §1's "state, not story" rule found live in
 production):** a Google Drive ADC credential-loading check succeeded and was reported as "Drive
 access works" — a claim about a DIFFERENT, broader thing (a real, successful Drive API call)

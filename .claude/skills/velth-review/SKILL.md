@@ -1,6 +1,6 @@
 ---
 name: velth-review
-description: Code-level security and correctness review that runs inside velth-loop's verify/simplify step - the rung that catches what doc-verify (output correctness) does not. Security review (secrets, PII/GDPR, RLS, injection), property-based invariants for the P0 defect classes, and a staff-engineer self-review bar. Load for any task touching backend code, the export route, auth, or data ingestion.
+description: Code-level security and correctness review that runs inside velth-loop's verify/simplify step - the rung that catches what doc-verify (output correctness) does not. Security review (secrets, PII/GDPR, RLS, injection), property-based invariants for the P0 defect classes, a mandatory ponytail-driven behavior-change check for any diff touching existing control flow, and a staff-engineer self-review bar. Load for any task touching backend code, the export route, auth, or data ingestion.
 trigger: auto
 ---
 
@@ -43,6 +43,25 @@ Install once: `pip install hypothesis --break-system-packages`.
 Optional next step: mutation testing (mutmut/cosmic-ray) to measure whether the
 suite actually KILLS injected faults (coupling effect, arXiv:2301.13615) - high
 value before trusting "green" on the legal-critical paths.
+
+## BEHAVIOR-CHANGE CHECK (mandatory before approving a diff to existing logic)
+
+Security/correctness review can pass cleanly - no secret, no injection, no RLS
+gap, tests green - while the diff still silently reverses a deliberate design
+decision elsewhere in the same function or file. That is a real, distinct
+defect class from everything above, and this section exists because it shipped
+to production undetected on 2026-09-22 (see `velth-prod-verify`): a fix for a
+swallowed-error bug made the caller fail-closed, inverting an already-committed
+and documented warn-and-continue decision (`e3fd34086`) in the same function,
+for a reason (the caller had already produced real output by that point) the
+new diff never re-checked. Before approving any diff that touches existing
+control flow (not new code), require: **load `ponytail` and confirm its
+preservation-rule inventory was actually done** - what did the removed/changed
+behavior protect, and is there a demonstrated equivalent contract, not just an
+assertion that the new behavior is "more correct." If the diff's own commit
+message or PR description does not answer this, that is a finding, at the
+same severity tier as a missed security check - stop and ask, do not approve
+on green tests alone.
 
 ## STAFF-ENGINEER BAR + SIMPLIFY (the verify-app rule)
 

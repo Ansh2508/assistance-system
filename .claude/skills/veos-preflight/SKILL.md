@@ -22,6 +22,16 @@ approval design with the same seriousness as customer-facing VELTH work.
   Registry, pull+restart on BOTH veos-core-01 and veos-drive-ingestor-01.
   Never trust "deployed" without checking the image tag traces to the
   commit you think it does — Sprint 3's own near-miss was a stale image.
+- **Before building a fix for a described gap, confirm `main` doesn't
+  already have it.** Real incident, 2026-09-24 (same session as the VELTH
+  corruption incident below): a full night was spent on VELTH Phase-0 site
+  fixes that had already been merged to VELTH's `main` the day before -
+  the check that would have caught it (`git fetch origin && git log
+  --oneline origin/main -5`, then diff the specific files about to be
+  "fixed" against current `main`) was never run before starting. The same
+  risk applies here: `git fetch origin && git log --oneline origin/main
+  -10` before writing a fix, every session, not just at session start but
+  again immediately before starting new work if any time has passed.
 
 ## KNOWN TRAPS (verified 2026-08-26)
 - **Never declare `google_compute_instance.boot_disk.initialize_params.
@@ -374,6 +384,88 @@ approval design with the same seriousness as customer-facing VELTH work.
   "structural verification vs. functional verification" section for the
   named industry anti-patterns this maps to (configuration drift,
   "The Liar," "Structural Inspection").
+
+## KNOWN TRAPS (verified 2026-09-24) — local git object-store corruption, and how it was actually fixed
+
+Real incident, VELTH repo (the same lesson applies here — both repos are
+plain git, both can accumulate this): a local checkout accumulated years of
+stale local branches and remote-tracking refs whose commit objects were
+missing (`git fsck --full` reported "invalid sha1 pointer" on 61 local
+`refs/heads/*` and hundreds of `refs/remotes/origin/*`). This was NOT
+caused by the session that found it - `git status` worked fine at session
+start; the corruption only surfaced once `git diff`/`git fetch`/`git add`
+were run, because git's `gc`/fetch-negotiation logic walks ALL local refs
+to determine reachability, and ONE broken ref anywhere blocks the whole
+operation, even for completely unrelated branches like `main`.
+
+**What actually worked, in order:**
+1. `git fsck --full 2>&1 | grep "invalid sha1 pointer"` to enumerate every
+   broken ref - but READ THE OUTPUT CAREFULLY: fsck also reports unrelated
+   error classes on the same grep pattern (e.g. "invalid sha1 pointer in
+   cache-tree of .git/worktrees/*/index" is a DIFFERENT problem, index
+   cache corruption in OTHER worktrees sharing the same object store - a
+   loose regex conflated these once this session and produced a wildly
+   wrong scale estimate, 2287 vs the real ~61). Isolate to exactly
+   `^error: refs/heads/` and `^error: refs/remotes/origin/` before acting.
+2. For each broken local branch: `git ls-remote origin refs/heads/<name>`
+   to check if it still exists upstream. If yes, `git branch -D <name>` is
+   completely safe (origin has the real history; local delete only removes
+   a local pointer, never a commit). If no, it's dead - also safe to
+   delete, nothing unique is lost.
+3. **`git branch -D` on a currently-checked-out-branch-in-ANOTHER-WORKTREE
+   is correctly refused by git itself** ("used by worktree at ...") - this
+   protection worked and prevented real damage. For those branches, the
+   fix has to happen from inside that worktree, or by fetching that one
+   ref directly: `git fetch origin <branch>:refs/heads/<branch> --force`.
+4. Broken `refs/remotes/origin/*` entries are pure local cache and can be
+   deleted directly with `git update-ref -d <ref>` without any remote
+   round-trip - safe at any scale, hundreds at once, nothing to lose.
+5. **The near-miss**: a bulk-delete loop over "every branch confirmed still
+   on origin" did not exclude the currently-active `main` (main is
+   ALWAYS "still on origin" by definition, so a naive origin-membership
+   filter includes it) - `main` got deleted by the same loop.
+   **Recovery was one command and fully safe: `git branch main
+   origin/main`** (the local branch pointer is gone, but `origin/main`,
+   the remote-tracking ref, still held the same commit) - confirmed via
+   `git rev-parse main origin/main` both returning the identical SHA
+   afterward. **The generalizable lesson: `git branch -D` NEVER deletes a
+   commit, only a local named pointer - if the same commit is reachable
+   from ANY other ref (a remote-tracking branch, another local branch, a
+   tag), recreating the pointer with `git branch <name> <that-other-ref>`
+   is always instant and lossless.** This is why the incident, despite
+   being a real mistake, cost zero actual data - but the practical fix is
+   to explicitly exclude the current branch (`git branch --show-current`)
+   from ANY bulk branch-deletion loop before running it, not to rely on
+   post-hoc recovery.
+6. **When corruption is too deep to fix via targeted ref surgery** (e.g.
+   `git add`/`git status` themselves start failing with "unable to read
+   tree <sha>" - meaning even index-level operations can't resolve a
+   needed object), the safe, standard fix is a **fresh clone into a NEW
+   directory**, never touching the broken checkout further. **Verify the
+   fresh clone is actually healthy before trusting it** - `git fsck --full`
+   should report zero errors, AND separately check for null-byte file
+   corruption (`python -c "import pathlib; ..."` scanning for `\x00` in
+   text files, excluding real binary asset extensions like
+   `.woff/.png/.webp/.glb/.gif/.jpeg` which legitimately contain them) -
+   one clone attempt this session was itself corrupted (714 of 988 files
+   null-byte-corrupted) from an interrupted prior session, and would have
+   been trusted blind without this check.
+7. **Before porting any "fix" from the corrupted checkout into a fresh
+   clone, diff each target file against the clone's CURRENT version first**
+   - `main` may have moved since the corrupted checkout was last synced,
+   and blindly overwriting risks discarding real, newer, independent work
+   (see the "check before you build" trap above - this is the same root
+   cause, encountered a second time in the same session).
+8. **Two dormant worktrees (unmodified for 3+ months) were found with their
+   own HEAD unreadable (`fatal: bad object HEAD`)** - these block bulk ref
+   cleanup from the main checkout (their checked-out branch can't be
+   force-deleted from elsewhere) but are themselves already unusable and
+   not silently made worse by leaving them alone. Flag stale/broken
+   worktrees to the human rather than attempting `git worktree remove
+   --force` unprompted - that action is correctly gated by the harness's
+   own destructive-action classifier and needs explicit confirmation, since
+   an agent cannot verify from outside a broken worktree whether it holds
+   real uncommitted work.
 
 ## SKILL TRIAGE — VELTH-wide skills that apply here unchanged
 `velth-graph-engineering`, `velth-spec`, `velth-loop`, `velth-context`,
