@@ -141,6 +141,19 @@ one by name instead of waiting for auto-trigger:
 - `legal-updater` — check/update legal references (ADR versions, DGUV
   updates) in YAML files. Same note as above.
 
+**Bringing VELTH/veOS's real engineering experience to a different project:**
+- `hard-won-engineering-lessons` — VELTH and veOS have two skills that are
+  living incident logs (`veos-preflight`'s "KNOWN TRAPS", `veos-wiring-and-
+  ai-test`'s numbered incidents, `velth-prod-verify`'s deploy-verification
+  procedure) documenting real, dated failures: configuration drift, health
+  checks that structurally can't detect the failure they're meant to catch,
+  single-instance tests of distributed mechanisms passing for the wrong
+  reason. Load this skill — not the VELTH/veOS ones directly — when working
+  on a DIFFERENT project and something looks like one of those shapes; it
+  teaches how to read the current source files live and re-derive the
+  equivalent for this project's real stack, rather than trusting a frozen
+  summary that goes stale the moment the source logs a new incident.
+
 ## When a new project earns its own `<project>-preflight` skill
 
 Per this environment's own established pattern (`velth-preflight`,
