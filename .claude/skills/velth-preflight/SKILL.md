@@ -316,14 +316,16 @@ Most non-trivial VELTH backend tasks load 4-6 of these together, not one.
 - `prompt-master` — only when explicitly asked to write, fix, or adapt a
   prompt for a different AI tool. Not for VELTH engineering work.
 
-**Generic lifecycle skills (`addyosmani/agent-skills`, MIT, added 2026-09-26)
-— not installed as active skills, referenced here so a session can pull one
-by name when it fills a real gap.** These are non-VELTH-specific,
-software-lifecycle-stage skills. Most stages already have a stronger,
-VELTH-specific equivalent below — load the VELTH one first. Only reach for
-the generic repo for the handful that have no VELTH-specific counterpart
-(marked ⭐), or when the VELTH skill explicitly hands off to a broader check
-it doesn't itself cover.
+**Generic lifecycle skills (`addyosmani/agent-skills`, MIT, added 2026-09-26,
+physically installed 2026-09-26).** These are non-VELTH-specific,
+software-lifecycle-stage skills, now real folders in `~/.claude/skills/`,
+not just referenced. Most stages already have a stronger, VELTH-specific
+equivalent below — the 18 with overlap have their `description:` field
+edited to say so explicitly ("On a VELTH task, prefer X instead — this
+generic skill is for other projects or genuine gaps"), so they should not
+compete with VELTH's own version for auto-triggering on a VELTH task, while
+still firing normally on any other project. The 6 with no VELTH-specific
+counterpart (marked ⭐) were left completely unmodified.
 
 | Generic skill | Covers | VELTH equivalent already in this library |
 |---|---|---|
@@ -352,7 +354,8 @@ it doesn't itself cover.
 | `idea-refine` / `interview-me` | sharpen a vague idea via structured questioning | ⭐ no VELTH-specific equivalent — useful when a request is genuinely underspecified and `AskUserQuestion` alone isn't enough structure |
 | `using-agent-skills` | meta-skill: how to discover/pick a skill | Superseded here by this file (`velth-preflight`) acting as the project's own skill router — don't load the generic meta-skill, it doesn't know this project's skill set |
 
-Not cloned into `~/.claude/skills/` as active skills — pull one by name via
-the Skill tool only when the ⭐ gap genuinely applies, or the task explicitly
-asks for the generic version. Installing all 24 alongside VELTH's own would
-create two competing routers; this table is the router instead.
+See `$skill-map` for the same 24-skill routing table written for ANY
+project, not just VELTH — this table exists so a VELTH session sees the
+VELTH-specific column without leaving this file; `skill-map` is what a
+non-VELTH repo (or a fresh session that hasn't loaded `velth-preflight` yet)
+should load instead.

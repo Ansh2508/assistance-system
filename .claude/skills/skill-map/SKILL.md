@@ -39,6 +39,46 @@ These apply regardless of which project you're in. Load the project-specific
 preflight FIRST if one exists (Step 1) — these are supplementary, not a
 substitute for a project's own environment constants and rules.
 
+**Software-lifecycle skills (`addyosmani/agent-skills`, MIT, 24 skills,
+physically installed in `~/.claude/skills/`, added 2026-09-26).** These are
+genuinely project-agnostic — define/plan/build/verify/review/ship stages
+that apply to any codebase. On VELTH specifically, 18 of them have their
+own `description:` edited to defer to a stronger VELTH-specific skill (see
+`$velth-preflight`'s own copy of this table for that column) — that
+deferral note is invisible and irrelevant outside VELTH; on any other
+project these 18 behave exactly like the other 6, no special-casing needed.
+Auto-triggering already picks the right one from its description; this
+list is here so a session (or Anshu) can see the full menu and reach for
+one by name instead of waiting for auto-trigger:
+
+| Stage | Skill | Use it for |
+|---|---|---|
+| Define | `interview-me` | extract what's actually wanted via one-question-at-a-time interview to ~95% confidence |
+| Define | `idea-refine` | turn a vague idea into a sharp, actionable concept |
+| Define | `spec-driven-development` | write a PRD/spec before any code, when none exists yet |
+| Define | `constraint-driven-development` | write the project's quality bar down as a contract, stop it eroding silently |
+| Plan | `planning-and-task-breakdown` | decompose a spec into small, ordered, testable units |
+| Build | `incremental-implementation` | ship thin vertical slices, feature-flagged, instead of one big change |
+| Build | `test-driven-development` | red-green-refactor loop, test pyramid |
+| Build | `context-engineering` | set up session/project context, rules files |
+| Build | `source-driven-development` | ground a decision in official docs before implementing |
+| Build | `doubt-driven-development` | adversarial fresh-context review of a plan before it stands |
+| Build | `frontend-ui-engineering` | components, accessibility, responsive layout |
+| Build | `api-and-interface-design` | REST/GraphQL contracts, module/interface boundaries |
+| Verify | `browser-testing-with-devtools` | live Chrome DevTools inspection — DOM, console, network, perf (needs the chrome-devtools MCP server configured) |
+| Verify | `debugging-and-error-recovery` | systematic reproduce→localize→reduce→fix→guard, not guessing |
+| Review | `code-review-and-quality` | multi-axis review with severity labels, before any merge |
+| Review | `code-simplification` | reduce complexity, preserve behavior exactly |
+| Review | `security-and-hardening` | OWASP Top 10, auth, secrets, supply-chain risk |
+| Review | `performance-optimization` | Core Web Vitals, query/N+1 profiling, load-time regressions |
+| Ship | `git-workflow-and-versioning` | atomic commits, branch hygiene, splitting a messy tree |
+| Ship | `ci-cd-and-automation` | pipeline setup, quality gates, deployment strategy |
+| Ship | `deprecation-and-migration` | removing old systems/APIs, DB schema migration, expand/contract |
+| Ship | `documentation-and-adrs` | architecture decision records, design-choice reasoning |
+| Ship | `observability-and-instrumentation` | logging, metrics, tracing, alerting for production visibility |
+| Ship | `shipping-and-launch` | pre-launch checklist, staged rollout, rollback strategy |
+| Meta | `using-agent-skills` | upstream's own meta-skill for picking a skill — superseded here by this file (`skill-map`), which already knows this environment's full set; don't load `using-agent-skills` itself |
+
 **Research / verifying an external claim before acting on it:**
 - `research-simulate-encode` — read primary sources, validate at your own
   scale, encode the decision structurally. Use before committing to a design
